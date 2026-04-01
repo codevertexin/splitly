@@ -49,7 +49,24 @@ export function useGroupBalances(session: Session | null, groupId: string | unde
         return sum + (mySplit?.share_cents || 0);
       }, 0);
 
-      setMyBalanceCents(paid - owed);
+      let balance = paid - owed;
+
+      const { data: settlements, error: settlementsError } = await supabase
+        .from('settlements')
+        .select('from_user_id, to_user_id, amount_cents')
+        .eq('group_id', groupId)
+        .is('deleted_at', null);
+
+      if (!settlementsError && settlements?.length) {
+        const uid = session.user.id;
+        for (const s of settlements) {
+          const amt = s.amount_cents || 0;
+          if (s.from_user_id === uid) balance += amt;
+          if (s.to_user_id === uid) balance -= amt;
+        }
+      }
+
+      setMyBalanceCents(balance);
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Failed to load balance';
       console.error('useGroupBalances:', message);

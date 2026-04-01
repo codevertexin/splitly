@@ -146,6 +146,40 @@ export function suggestSettlementAwareEqualSplit(input: {
   return { baseShares: baseCloned, adjustedShares, applied: extraTotal > 0, transferable: extraTotal, extrasByDebtor, reason: 'applied' };
 }
 
+/**
+ * Computes manual splits for create-expense when equal split + settlement-aware applies.
+ * Recomputes at submit time so persisted shares match the submitted amount (same as preview).
+ */
+export function getSettlementAwareManualSubmitSplits(input: {
+  amountCents: number;
+  participantIds: string[];
+  payerId: string;
+  debtsToPayer: Record<string, number>;
+  settleAwareEnabled: boolean;
+  splitMethod: 'equal' | 'manual' | 'percentage';
+}): {
+  splits: Array<{ user_id: string; share_cents: number }> | undefined;
+  effectiveSplitMethod: 'equal' | 'manual';
+  suggestion: ReturnType<typeof suggestSettlementAwareEqualSplit>;
+} {
+  const suggestion = suggestSettlementAwareEqualSplit({
+    amountCents: input.amountCents,
+    participantIds: input.participantIds,
+    payerId: input.payerId,
+    debtsToPayer: input.debtsToPayer,
+    enabled: input.settleAwareEnabled,
+    splitMethod: input.splitMethod,
+  });
+  if (input.splitMethod !== 'equal' || !input.settleAwareEnabled || !suggestion.applied) {
+    return { splits: undefined, effectiveSplitMethod: 'equal', suggestion };
+  }
+  return {
+    splits: input.participantIds.map((id) => ({ user_id: id, share_cents: suggestion.adjustedShares[id] || 0 })),
+    effectiveSplitMethod: 'manual',
+    suggestion,
+  };
+}
+
 export function applySettlementAwareShift(input: {
   participantIds: string[];
   currentUserId: string;

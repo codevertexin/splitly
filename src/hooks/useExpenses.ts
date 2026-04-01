@@ -74,6 +74,7 @@ export function useExpenses(session: Session) {
       split_method: 'equal' | 'manual' | 'percentage';
       participant_ids: string[];
       splits?: Array<{ user_id: string; share_cents?: number; percentage?: number }>;
+      status: 'draft' | 'confirmed';
     }
   ) => {
     setActionLoading(true);
@@ -87,6 +88,7 @@ export function useExpenses(session: Session) {
           split_method: input.split_method,
           participant_ids: input.participant_ids,
           splits: input.splits,
+          status: input.status,
         },
         headers: {
           Authorization: `Bearer ${session.access_token}`,

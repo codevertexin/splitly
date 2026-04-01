@@ -14,6 +14,7 @@ import {
   buildEqualSharesCents,
   canApplySettlementAwareEqualSplit,
   computeDebtsToCurrentUser,
+  getSettlementAwareManualSubmitSplits,
   runSettlementAwareSelfChecks,
   suggestSettlementAwareEqualSplit,
 } from '../../../lib/settlementSplit';
@@ -60,10 +61,15 @@ export function CreateExpenseForm({
   const [percentageShares, setPercentageShares] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [expenseStatus, setExpenseStatus] = useState<'draft' | 'confirmed'>(initialStatus);
 
   React.useEffect(() => {
     setTitle(initialTitle);
   }, [initialTitle]);
+
+  React.useEffect(() => {
+    setExpenseStatus(initialStatus);
+  }, [initialStatus]);
 
   React.useEffect(() => {
     if (!participants.length) return;
@@ -147,8 +153,9 @@ export function CreateExpenseForm({
     setLoading(true);
 
     try {
-      const amountCents = Math.round(parseFloat(amount) * 100);
-      if (isNaN(amountCents) || amountCents <= 0) {
+      const euros = parseFloat(amount.replace(',', '.'));
+      const amountCents = Math.round(euros * 100);
+      if (Number.isNaN(euros) || amountCents <= 0) {
         throw new Error(t('expenseForm.invalidAmount'));
       }
 
@@ -200,33 +207,92 @@ export function CreateExpenseForm({
               share_cents: share,
             };
           });
-        } else if (splitMethod === 'equal' && settleAwareEnabled && settleAwareAvailable) {
-          if (settlementSuggestion.applied) {
-            splits = participantIds.map((id) => ({ user_id: id, share_cents: settlementSuggestion.adjustedShares[id] || 0 }));
-            effectiveSplitMethod = 'manual';
+        } else if (splitMethod === 'equal') {
+          const settleSubmit = getSettlementAwareManualSubmitSplits({
+            amountCents,
+            participantIds,
+            payerId: session.user.id,
+            debtsToPayer: debtsToCurrentUser,
+            settleAwareEnabled,
+            splitMethod,
+          });
+          if (import.meta.env.DEV && settleAwareEnabled) {
+            console.log('[create-expense][settlement-aware]', {
+              amountCents,
+              baseShares: settleSubmit.suggestion.baseShares,
+              adjustedShares: settleSubmit.suggestion.adjustedShares,
+              applied: settleSubmit.suggestion.applied,
+              reason: settleSubmit.suggestion.reason,
+            });
+          }
+          if (settleSubmit.splits) {
+            splits = settleSubmit.splits;
+            effectiveSplitMethod = settleSubmit.effectiveSplitMethod;
           }
         }
 
+        const createBody = {
+          group_id: groupId,
+          event_id: eventId || null,
+          title,
+          description,
+          amount_cents: amountCents,
+          currency: 'EUR',
+          paid_by_user_id: session.user.id,
+          participant_ids: participantIds,
+          split_method: effectiveSplitMethod,
+          splits,
+          status: expenseStatus,
+        };
+        if (import.meta.env.DEV && splitMethod === 'equal' && settleAwareEnabled) {
+          console.log('[create-expense] payload', createBody);
+        }
+
         const { data, error: fnError } = await supabase.functions.invoke('create-expense', {
-          body: {
-            group_id: groupId,
-            event_id: eventId || null,
-            title,
-            description,
-            amount_cents: amountCents,
-            currency: 'EUR',
-            paid_by_user_id: session.user.id,
-            participant_ids: participantIds,
-            split_method: effectiveSplitMethod,
-            splits,
-            status: initialStatus,
-          },
+          body: createBody,
           headers: {
             Authorization: `Bearer ${session.access_token}`,
           },
         });
+        if (import.meta.env.DEV) {
+          console.log('[create-expense] response', data);
+        }
         if (fnError) throw fnError;
         if (data?.error) throw new Error(data.error);
+
+        const created = data as { expense?: { id: string }; split_method?: string } | undefined;
+        if (
+          import.meta.env.DEV &&
+          created?.expense?.id &&
+          effectiveSplitMethod === 'manual' &&
+          splits?.length
+        ) {
+          const { data: persistedRow, error: persistErr } = await supabase
+            .from('expenses')
+            .select('split_method, splits:expense_splits(user_id, share_cents)')
+            .eq('id', created.expense.id)
+            .single();
+          if (!persistErr && persistedRow) {
+            const persistedMap = Object.fromEntries(
+              (persistedRow.splits as Array<{ user_id: string; share_cents: number }>).map((s) => [
+                s.user_id,
+                s.share_cents,
+              ]),
+            );
+            const expectedMap = Object.fromEntries(splits.map((s) => [s.user_id, s.share_cents]));
+            const keys = new Set([...Object.keys(persistedMap), ...Object.keys(expectedMap)]);
+            let match = persistedRow.split_method === 'manual';
+            for (const k of keys) {
+              if ((persistedMap[k] ?? -1) !== (expectedMap[k] ?? -2)) match = false;
+            }
+            console.log('[create-expense] persisted vs preview splits', {
+              split_method: persistedRow.split_method,
+              persistedMap,
+              expectedMap,
+              match,
+            });
+          }
+        }
       } else {
         const { error: insertError } = await supabase
           .from('expenses')
@@ -240,7 +306,7 @@ export function CreateExpenseForm({
             created_by: session.user.id,
             currency: 'EUR',
             split_method: 'equal',
-            status: initialStatus,
+            status: expenseStatus,
           });
         if (insertError) throw insertError;
       }
@@ -290,6 +356,19 @@ export function CreateExpenseForm({
         onChange={(e) => setDescription(e.target.value)}
         placeholder={t('expenseForm.descriptionPlaceholder')}
       />
+
+      <div className="space-y-1">
+        <label className="block text-sm font-semibold text-slate-700">{t('groupExpense.expenseStatusLabel')}</label>
+        <select
+          className="block w-full px-4 py-2.5 bg-slate-50 border border-slate-100 rounded-xl text-sm text-slate-700"
+          value={expenseStatus}
+          onChange={(e) => setExpenseStatus(e.target.value as 'draft' | 'confirmed')}
+        >
+          <option value="draft">{t('groupExpense.expenseStatusDraft')}</option>
+          <option value="confirmed">{t('groupExpense.expenseStatusConfirmed')}</option>
+        </select>
+        <p className="text-xs text-slate-500">{t('groupExpense.expenseStatusHint')}</p>
+      </div>
 
       {(participantsLoading || !!participantsError || participants.length > 0) && (
         <>

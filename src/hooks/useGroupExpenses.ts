@@ -23,6 +23,8 @@ export type CreateExpenseInput = {
   participant_ids: string[];
   split_method: 'equal' | 'manual' | 'percentage';
   splits?: Array<{ user_id: string; share_cents?: number; percentage?: number }>;
+  /** Defaults to confirmed when omitted (matches create-expense edge function). */
+  status?: 'draft' | 'confirmed';
 };
 
 export function useGroupExpenses(session: Session | null, groupId: string | undefined) {
@@ -92,21 +94,31 @@ export function useGroupExpenses(session: Session | null, groupId: string | unde
 
     setActionLoading(true);
     try {
+      const body = {
+        group_id: groupId,
+        title: input.title.trim(),
+        amount_cents: input.amount_cents,
+        currency: 'EUR',
+        paid_by_user_id: input.paid_by_user_id,
+        participant_ids: input.participant_ids,
+        split_method: input.split_method,
+        splits: input.splits,
+        status: input.status ?? 'confirmed',
+      };
+      if (import.meta.env.DEV) {
+        console.log('[create-expense] payload', body);
+      }
+
       const { data, error: fnError } = await supabase.functions.invoke('create-expense', {
-        body: {
-          group_id: groupId,
-          title: input.title.trim(),
-          amount_cents: input.amount_cents,
-          currency: 'EUR',
-          paid_by_user_id: input.paid_by_user_id,
-          participant_ids: input.participant_ids,
-          split_method: input.split_method,
-          splits: input.splits,
-        },
+        body,
         headers: {
           Authorization: `Bearer ${session.access_token}`,
         },
       });
+
+      if (import.meta.env.DEV) {
+        console.log('[create-expense] response', data);
+      }
 
       if (fnError) {
         let msg = fnError.message;
@@ -118,6 +130,46 @@ export function useGroupExpenses(session: Session | null, groupId: string | unde
       }
       if (data && typeof data === 'object' && data !== null && 'error' in data && (data as { error?: string }).error) {
         throw new Error(String((data as { error: string }).error));
+      }
+
+      if (
+        import.meta.env.DEV &&
+        input.split_method === 'manual' &&
+        input.splits?.length
+      ) {
+        const created = data as { expense?: { id: string } } | null;
+        const expenseId = created?.expense?.id;
+        if (expenseId) {
+          const splitsIn = input.splits.filter(
+            (s): s is { user_id: string; share_cents: number } =>
+              typeof s.share_cents === 'number',
+          );
+          const { data: persistedRow, error: persistErr } = await supabase
+            .from('expenses')
+            .select('split_method, splits:expense_splits(user_id, share_cents)')
+            .eq('id', expenseId)
+            .single();
+          if (!persistErr && persistedRow) {
+            const persistedMap = Object.fromEntries(
+              (persistedRow.splits as Array<{ user_id: string; share_cents: number }>).map((s) => [
+                s.user_id,
+                s.share_cents,
+              ]),
+            );
+            const expectedMap = Object.fromEntries(splitsIn.map((s) => [s.user_id, s.share_cents]));
+            const keys = new Set([...Object.keys(persistedMap), ...Object.keys(expectedMap)]);
+            let match = persistedRow.split_method === 'manual';
+            for (const k of keys) {
+              if ((persistedMap[k] ?? -1) !== (expectedMap[k] ?? -2)) match = false;
+            }
+            console.log('[create-expense] persisted vs preview splits', {
+              split_method: persistedRow.split_method,
+              persistedMap,
+              expectedMap,
+              match,
+            });
+          }
+        }
       }
 
       await fetchExpenses();
@@ -139,6 +191,7 @@ export function useGroupExpenses(session: Session | null, groupId: string | unde
       split_method: 'equal' | 'manual' | 'percentage';
       participant_ids: string[];
       splits?: Array<{ user_id: string; share_cents?: number; percentage?: number }>;
+      status: 'draft' | 'confirmed';
     }
   ) => {
     if (!session || !groupId) {
@@ -156,6 +209,7 @@ export function useGroupExpenses(session: Session | null, groupId: string | unde
           split_method: input.split_method,
           participant_ids: input.participant_ids,
           splits: input.splits,
+          status: input.status,
         },
         headers: {
           Authorization: `Bearer ${session.access_token}`,

@@ -15,6 +15,7 @@ import {
   buildEqualSharesCents,
   canApplySettlementAwareEqualSplit,
   computeDebtsToCurrentUser,
+  getSettlementAwareManualSubmitSplits,
   runSettlementAwareSelfChecks,
   suggestSettlementAwareEqualSplit,
 } from '../../../lib/settlementSplit';
@@ -56,12 +57,14 @@ export function CreateExpenseModal({
   const [manualShares, setManualShares] = useState<Record<string, string>>({});
   const [percentageShares, setPercentageShares] = useState<Record<string, string>>({});
   const [formError, setFormError] = useState<string | null>(null);
+  const [expenseStatus, setExpenseStatus] = useState<'draft' | 'confirmed'>('confirmed');
 
   useEffect(() => {
     if (!isOpen) return;
     setTitle('');
     setAmount('');
     setFormError(null);
+    setExpenseStatus('confirmed');
     setSplitMethod('equal');
     setSettleAwareEnabled(false);
     setManualShares({});
@@ -188,10 +191,27 @@ export function CreateExpenseModal({
           share_cents: share,
         };
       });
-    } else if (splitMethod === 'equal' && settleAwareEnabled && settleAwareAvailable) {
-      if (settlementSuggestion.applied) {
-        splits = participantIds.map((id) => ({ user_id: id, share_cents: settlementSuggestion.adjustedShares[id] || 0 }));
-        effectiveSplitMethod = 'manual';
+    } else if (splitMethod === 'equal') {
+      const settleSubmit = getSettlementAwareManualSubmitSplits({
+        amountCents,
+        participantIds,
+        payerId: session.user.id,
+        debtsToPayer: debtsToCurrentUser,
+        settleAwareEnabled,
+        splitMethod,
+      });
+      if (import.meta.env.DEV && settleAwareEnabled) {
+        console.log('[create-expense][settlement-aware]', {
+          amountCents,
+          baseShares: settleSubmit.suggestion.baseShares,
+          adjustedShares: settleSubmit.suggestion.adjustedShares,
+          applied: settleSubmit.suggestion.applied,
+          reason: settleSubmit.suggestion.reason,
+        });
+      }
+      if (settleSubmit.splits) {
+        splits = settleSubmit.splits;
+        effectiveSplitMethod = settleSubmit.effectiveSplitMethod;
       }
     }
 
@@ -202,6 +222,7 @@ export function CreateExpenseModal({
       participant_ids: participantIds,
       split_method: effectiveSplitMethod,
       splits,
+      status: expenseStatus,
     });
 
     if (result.success) {
@@ -295,6 +316,23 @@ export function CreateExpenseModal({
           onChange={(e) => setAmount(e.target.value)}
           placeholder="0.00"
         />
+
+        <div className="space-y-1">
+          <label className="block text-sm font-semibold text-slate-700" htmlFor="expense-status">
+            {t('groupExpense.expenseStatusLabel')}
+          </label>
+          <select
+            id="expense-status"
+            disabled={disabled}
+            className="block w-full px-4 py-2.5 bg-slate-50 border border-slate-100 rounded-xl text-sm text-slate-700"
+            value={expenseStatus}
+            onChange={(e) => setExpenseStatus(e.target.value as 'draft' | 'confirmed')}
+          >
+            <option value="draft">{t('groupExpense.expenseStatusDraft')}</option>
+            <option value="confirmed">{t('groupExpense.expenseStatusConfirmed')}</option>
+          </select>
+          <p className="text-xs text-slate-500">{t('groupExpense.expenseStatusHint')}</p>
+        </div>
 
         <div className="space-y-2">
           <span className="block text-sm font-semibold text-slate-700">{t('groupExpense.participantsLabel')}</span>

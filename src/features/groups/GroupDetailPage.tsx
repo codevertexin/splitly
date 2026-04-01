@@ -26,6 +26,7 @@ import {
   computeDebtsToCurrentUser,
   suggestSettlementAwareEqualSplit,
 } from '../../lib/settlementSplit';
+import { buildSettlementSuggestionsForUser } from '../../lib/settlementSuggestions';
 
 interface GroupDetailPageProps {
   session: Session;
@@ -107,6 +108,7 @@ export function GroupDetailPage({ session }: GroupDetailPageProps) {
   const [editManualShares, setEditManualShares] = useState<Record<string, string>>({});
   const [editPercentageShares, setEditPercentageShares] = useState<Record<string, string>>({});
   const [editError, setEditError] = useState<string | null>(null);
+  const [editStatus, setEditStatus] = useState<'draft' | 'confirmed'>('confirmed');
   const editAmountCentsPreview = Math.round((parseFloat(editAmount.replace(',', '.')) || 0) * 100);
   const editEqualSharesPreview = useMemo(
     () => buildEqualSharesCents(editParticipantIds, editAmountCentsPreview),
@@ -167,9 +169,86 @@ export function GroupDetailPage({ session }: GroupDetailPageProps) {
     }
   }, [id, groups, loading]);
 
-  const handleSettleUp = async () => {
-    await new Promise((resolve) => setTimeout(resolve, 1000));
-  };
+  const [settleLoading, setSettleLoading] = useState(false);
+  const [settleFeedback, setSettleFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+
+  const groupSettlementSuggestions = useMemo(() => {
+    if (!group) return [];
+    const profileNamesById: Record<string, string> = {};
+    for (const m of members) {
+      if (m.full_name?.trim()) profileNamesById[m.user_id] = m.full_name.trim();
+    }
+    return buildSettlementSuggestionsForUser(allExpenses, session.user.id, {
+      groupId: group.id,
+      groupNameById: new Map([[group.id, group.name]]),
+      profileNamesById,
+    });
+  }, [allExpenses, group, members, session.user.id]);
+
+  useEffect(() => {
+    if (!settleFeedback) return;
+    const timeout = window.setTimeout(() => setSettleFeedback(null), 5000);
+    return () => window.clearTimeout(timeout);
+  }, [settleFeedback]);
+
+  const handleSettleUp = useCallback(async () => {
+    if (!group) return;
+    if (import.meta.env.DEV) {
+      console.log('[group-settle] start', {
+        groupId: group.id,
+        suggestionCount: groupSettlementSuggestions.length,
+        rows: groupSettlementSuggestions,
+      });
+    }
+    setSettleLoading(true);
+    setSettleFeedback(null);
+    try {
+      const rows = groupSettlementSuggestions.filter((r) => r.amount_cents > 0);
+      if (rows.length === 0) {
+        setSettleFeedback({ type: 'error', message: t('groupDetail.settleNothingToRecord') });
+        return;
+      }
+      const now = new Date().toISOString();
+      const payload = rows.map((row) => ({
+        group_id: row.group_id,
+        event_id: null as string | null,
+        from_user_id: row.from_user_id,
+        to_user_id: row.to_user_id,
+        amount_cents: row.amount_cents,
+        currency: 'EUR',
+        settled_at: now,
+        note: 'Group detail: settle up',
+        created_by: session.user.id,
+      }));
+      if (import.meta.env.DEV) {
+        console.log('[group-settle] insert payload', payload);
+      }
+      const { data: inserted, error } = await supabase.from('settlements').insert(payload).select('id');
+      if (import.meta.env.DEV) {
+        console.log('[group-settle] insert result', { inserted, error });
+      }
+      if (error) throw error;
+      setSettleFeedback({ type: 'success', message: t('groupDetail.settleRecordedSuccess') });
+      await Promise.all([refetchBalances(), refetchExpenses(), refetchBalancesZero()]);
+      if (import.meta.env.DEV) {
+        console.log('[group-settle] refetch done');
+      }
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : t('groupDetail.settleRecordedError');
+      setSettleFeedback({ type: 'error', message: msg });
+      if (import.meta.env.DEV) console.error('[group-settle] failed', e);
+    } finally {
+      setSettleLoading(false);
+    }
+  }, [
+    group,
+    groupSettlementSuggestions,
+    refetchBalances,
+    refetchExpenses,
+    refetchBalancesZero,
+    session.user.id,
+    t,
+  ]);
 
   const handleRequestPayment = useCallback(
     async (targetUserId: string, amountCents: number, targetName: string) => {
@@ -280,6 +359,7 @@ export function GroupDetailPage({ session }: GroupDetailPageProps) {
       : 'equal';
     setEditSplitMethod(method);
     setEditSettleAwareEnabled(false);
+    setEditStatus(expense.status === 'draft' ? 'draft' : 'confirmed');
     const manualMap: Record<string, string> = {};
     const pctMap: Record<string, string> = {};
     for (const split of expense.splits || []) {
@@ -394,6 +474,7 @@ export function GroupDetailPage({ session }: GroupDetailPageProps) {
         editSplitMethod === 'equal' && editSettleAwareEnabled && editSettleAwareAvailable ? 'manual' : editSplitMethod,
       participant_ids: editParticipantIds,
       splits,
+      status: editStatus,
     });
 
     if (result.success) {
@@ -470,6 +551,9 @@ export function GroupDetailPage({ session }: GroupDetailPageProps) {
         addExpenseDisabledHint={addExpenseDisabledHint}
         onBack={() => navigate('/groups')}
         onSettleUp={handleSettleUp}
+        settleActionLoading={settleLoading}
+        settleFeedback={settleFeedback}
+        onDismissSettleFeedback={() => setSettleFeedback(null)}
         onInvite={handleInvite}
         onNavigateToEvent={(eventId) => navigate(`/events/${eventId}`)}
         onOpenCreateEvent={() => setCreateEventModalOpen(true)}
@@ -543,6 +627,18 @@ export function GroupDetailPage({ session }: GroupDetailPageProps) {
             onChange={(e) => setEditDescription(e.target.value)}
             placeholder={t('expenseForm.descriptionPlaceholder')}
           />
+          <div className="space-y-1">
+            <label className="block text-sm font-semibold text-slate-700">{t('groupExpense.expenseStatusLabel')}</label>
+            <select
+              className="block w-full px-4 py-2.5 bg-slate-50 border border-slate-100 rounded-xl text-sm text-slate-700"
+              value={editStatus}
+              onChange={(e) => setEditStatus(e.target.value as 'draft' | 'confirmed')}
+            >
+              <option value="draft">{t('groupExpense.expenseStatusDraft')}</option>
+              <option value="confirmed">{t('groupExpense.expenseStatusConfirmed')}</option>
+            </select>
+            <p className="text-xs text-slate-500">{t('groupExpense.expenseStatusHint')}</p>
+          </div>
           <div className="space-y-2">
             <span className="block text-sm font-semibold text-slate-700">{t('groupExpense.participantsLabel')}</span>
             <div className="flex flex-wrap gap-2">

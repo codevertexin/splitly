@@ -31,6 +31,10 @@ import { Button } from '../../components/ui/Button';
 import { Modal } from '../../components/ui/Modal';
 import { CreateExpenseForm } from '../expenses/components/CreateExpenseForm';
 import { formatCurrencyCents, formatDateOnly } from '../../lib/dateTime';
+import {
+  buildSettlementSuggestionsForUser,
+  type SettlementSuggestionRow,
+} from '../../lib/settlementSuggestions';
 
 interface DashboardPageProps {
   session: Session;
@@ -135,18 +139,6 @@ export function DashboardPage({ session }: DashboardPageProps) {
     [groups, groupBalances]
   );
 
-  type SettlementSuggestionRow = {
-    key: string;
-    group_id: string;
-    group_name: string;
-    counterparty_id: string;
-    from_user_id: string;
-    to_user_id: string;
-    amount_cents: number;
-    counterparty_name: string;
-    direction: 'pay' | 'receive';
-  };
-
   const involvedUserIds = useMemo(() => {
     const ids = new Set<string>();
     for (const expense of expenses) {
@@ -181,53 +173,11 @@ export function DashboardPage({ session }: DashboardPageProps) {
   }, [involvedUserIds]);
 
   const settlementSuggestions = useMemo<SettlementSuggestionRow[]>(() => {
-    const pairMap = new Map<string, SettlementSuggestionRow>();
-    const groupName = new Map(groups.map((g) => [g.id, g.name]));
-    for (const expense of expenses) {
-      if (expense.status !== 'confirmed') continue;
-      if (expense.event?.status === 'draft') continue;
-      const splits = expense.splits || [];
-      if (expense.paid_by_user_id === session.user.id) {
-        for (const split of splits) {
-          if (split.user_id === session.user.id) continue;
-          const key = `${expense.group_id}:${split.user_id}:receive`;
-          const row = pairMap.get(key) || {
-            key,
-            group_id: expense.group_id,
-            group_name: groupName.get(expense.group_id) || 'Group',
-            counterparty_id: split.user_id,
-            from_user_id: split.user_id,
-            to_user_id: session.user.id,
-            amount_cents: 0,
-            counterparty_name: profileNamesById[split.user_id] || split.user_id,
-            direction: 'receive' as const,
-          };
-          row.amount_cents += split.share_cents || 0;
-          pairMap.set(key, row);
-        }
-      } else {
-        const mySplit = splits.find((s) => s.user_id === session.user.id);
-        if (!mySplit?.share_cents) continue;
-        const payerName = expense.profiles?.full_name || profileNamesById[expense.paid_by_user_id] || expense.paid_by_user_id;
-        const key = `${expense.group_id}:${expense.paid_by_user_id}:pay`;
-        const row = pairMap.get(key) || {
-          key,
-          group_id: expense.group_id,
-          group_name: groupName.get(expense.group_id) || 'Group',
-          counterparty_id: expense.paid_by_user_id,
-          from_user_id: session.user.id,
-          to_user_id: expense.paid_by_user_id,
-          amount_cents: 0,
-          counterparty_name: payerName,
-          direction: 'pay' as const,
-        };
-        row.amount_cents += mySplit.share_cents;
-        pairMap.set(key, row);
-      }
-    }
-    return Array.from(pairMap.values())
-      .filter((row) => row.amount_cents > 0)
-      .sort((a, b) => b.amount_cents - a.amount_cents);
+    const groupNameById = new Map(groups.map((g) => [g.id, g.name]));
+    return buildSettlementSuggestionsForUser(expenses, session.user.id, {
+      groupNameById,
+      profileNamesById,
+    });
   }, [expenses, groups, profileNamesById, session.user.id]);
 
   const [selectedSettlementKeys, setSelectedSettlementKeys] = useState<string[]>([]);

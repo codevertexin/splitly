@@ -46,6 +46,10 @@ interface GroupDetailProps {
   addExpenseDisabledHint?: string;
   onBack: () => void;
   onSettleUp: () => Promise<void>;
+  /** Loading state for confirm "Settle debts" only (optional; falls back to actionLoading). */
+  settleActionLoading?: boolean;
+  settleFeedback?: { type: 'success' | 'error'; message: string } | null;
+  onDismissSettleFeedback?: () => void;
   onInvite: () => void;
   onNavigateToEvent?: (eventId: string) => void;
   onOpenCreateEvent?: () => void;
@@ -175,6 +179,9 @@ export function GroupDetail({
   addExpenseDisabledHint,
   onBack,
   onSettleUp,
+  settleActionLoading,
+  settleFeedback,
+  onDismissSettleFeedback,
   onInvite,
   onNavigateToEvent,
   onOpenCreateEvent,
@@ -191,6 +198,7 @@ export function GroupDetail({
   actionLoading,
   onRetryBalance,
 }: GroupDetailProps) {
+  const settleBusy = settleActionLoading ?? actionLoading;
   const { t, i18n } = useTranslation();
   const navigate = useNavigate();
   const [showSettleConfirm, setShowSettleConfirm] = useState(false);
@@ -618,7 +626,7 @@ export function GroupDetail({
                   <Button onClick={() => setShowSettleConfirm(false)} variant="outline" size="sm">
                     <X className="h-4 w-4" />
                   </Button>
-                  <Button onClick={handleSettleUp} disabled={actionLoading} loading={actionLoading} variant="success" size="sm">
+                  <Button onClick={handleSettleUp} disabled={settleBusy} loading={settleBusy} variant="success" size="sm">
                     {t('groupDetail.confirm')}
                   </Button>
                 </div>
@@ -628,6 +636,28 @@ export function GroupDetail({
 
           {membersError && (
             <div className="mb-6 rounded-2xl border border-red-100 bg-red-50 p-4 text-sm text-red-800">{membersError}</div>
+          )}
+
+          {settleFeedback && (
+            <div
+              className={`mb-4 flex items-start justify-between gap-3 rounded-2xl border p-4 text-sm ${
+                settleFeedback.type === 'success'
+                  ? 'border-emerald-200 bg-emerald-50 text-emerald-900'
+                  : 'border-red-200 bg-red-50 text-red-900'
+              }`}
+              role="status"
+            >
+              <span>{settleFeedback.message}</span>
+              {onDismissSettleFeedback && (
+                <button
+                  type="button"
+                  className="shrink-0 font-semibold underline underline-offset-2 opacity-80 hover:opacity-100"
+                  onClick={onDismissSettleFeedback}
+                >
+                  {t('groupDetail.dismissNotice')}
+                </button>
+              )}
+            </div>
           )}
 
           <section className="mb-8 rounded-3xl border border-slate-200/90 bg-gradient-to-br from-slate-50 via-white to-slate-50/80 p-5 shadow-sm ring-1 ring-slate-100 sm:p-6">

@@ -57,6 +57,7 @@ export function ExpensesPage({ session }: ExpensesPageProps) {
   const [editPercentageShares, setEditPercentageShares] = useState<Record<string, string>>({});
   const [editMembers, setEditMembers] = useState<Array<{ user_id: string; full_name: string | null }>>([]);
   const [editError, setEditError] = useState<string | null>(null);
+  const [editStatus, setEditStatus] = useState<'draft' | 'confirmed'>('confirmed');
   const recentQuickFilterDays = useMemo(() => {
     const recentRaw = searchParams.get('recent');
     if (!recentRaw) return null;
@@ -182,6 +183,7 @@ export function ExpensesPage({ session }: ExpensesPageProps) {
     }
     setEditManualShares(manualMap);
     setEditPercentageShares(pctMap);
+    setEditStatus(expense.status === 'draft' ? 'draft' : 'confirmed');
     setEditError(null);
   };
 
@@ -309,6 +311,7 @@ export function ExpensesPage({ session }: ExpensesPageProps) {
         editSplitMethod === 'equal' && editSettleAwareEnabled && editSettleAwareAvailable ? 'manual' : editSplitMethod,
       participant_ids: editParticipantIds,
       splits,
+      status: editStatus,
     });
 
     if (result.success) {
@@ -566,6 +569,18 @@ export function ExpensesPage({ session }: ExpensesPageProps) {
             onChange={(e) => setEditDescription(e.target.value)}
             placeholder={t('expenseForm.descriptionPlaceholder')}
           />
+          <div className="space-y-1">
+            <label className="block text-sm font-semibold text-slate-700">{t('groupExpense.expenseStatusLabel')}</label>
+            <select
+              className="block w-full px-4 py-2.5 bg-slate-50 border border-slate-100 rounded-xl text-sm text-slate-700"
+              value={editStatus}
+              onChange={(e) => setEditStatus(e.target.value as 'draft' | 'confirmed')}
+            >
+              <option value="draft">{t('groupExpense.expenseStatusDraft')}</option>
+              <option value="confirmed">{t('groupExpense.expenseStatusConfirmed')}</option>
+            </select>
+            <p className="text-xs text-slate-500">{t('groupExpense.expenseStatusHint')}</p>
+          </div>
           <div className="space-y-2">
             <span className="block text-sm font-semibold text-slate-700">{t('groupExpense.participantsLabel')}</span>
             <div className="flex flex-wrap gap-2">

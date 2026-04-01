@@ -63,6 +63,24 @@ export function useGroupAllBalancesZero(groupId: string | undefined) {
         }
       }
 
+      const { data: settlements, error: settlementsError } = await supabase
+        .from('settlements')
+        .select('from_user_id, to_user_id, amount_cents')
+        .eq('group_id', groupId)
+        .is('deleted_at', null);
+
+      if (!settlementsError && settlements?.length) {
+        for (const s of settlements) {
+          const amt = s.amount_cents || 0;
+          if (balances.has(s.from_user_id)) {
+            balances.set(s.from_user_id, (balances.get(s.from_user_id) || 0) + amt);
+          }
+          if (balances.has(s.to_user_id)) {
+            balances.set(s.to_user_id, (balances.get(s.to_user_id) || 0) - amt);
+          }
+        }
+      }
+
       const ok = Array.from(balances.values()).every((value) => Math.abs(netCents(value)) < 1);
       setAllZero(ok);
     } catch (err: unknown) {
