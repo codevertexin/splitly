@@ -1,0 +1,5 @@
+{
+  "name": "Splitly",
+  "description": "A minimal fintech app for splitting expenses and managing groups.",
+  "requestFramePermissions": []
+}
