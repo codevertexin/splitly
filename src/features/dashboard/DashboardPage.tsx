@@ -14,11 +14,13 @@ import {
   Calendar,
   ChevronDown,
   ChevronUp,
+  CheckCircle2,
 } from 'lucide-react';
 import { motion } from 'motion/react';
 import { Session } from '@supabase/supabase-js';
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
+import { supabase } from '../../lib/supabase';
 import { useDashboardData } from '../../hooks/useDashboardData';
 import { useGroups } from '../../hooks/useGroups';
 import { useExpenses } from '../../hooks/useExpenses';
@@ -46,6 +48,12 @@ export function DashboardPage({ session }: DashboardPageProps) {
   const [inviteCardDismissed, setInviteCardDismissed] = useState(false);
   const [inviteExpanded, setInviteExpanded] = useState(false);
   const [showSettleHelp, setShowSettleHelp] = useState(false);
+  const [showSettleModal, setShowSettleModal] = useState(false);
+  const [settlingLoading, setSettlingLoading] = useState(false);
+  const [settlingError, setSettlingError] = useState<string | null>(null);
+  const [profileNamesById, setProfileNamesById] = useState<Record<string, string>>({});
+  const [settleViewMode, setSettleViewMode] = useState<'person' | 'group'>('person');
+  const [expandedGroupIds, setExpandedGroupIds] = useState<Record<string, boolean>>({});
   const [createExpenseOpen, setCreateExpenseOpen] = useState(false);
   const [selectedSuggestionTitle, setSelectedSuggestionTitle] = useState('');
   const [selectedGroupId, setSelectedGroupId] = useState<string>('');
@@ -126,6 +134,299 @@ export function DashboardPage({ session }: DashboardPageProps) {
     () => groups.filter((g) => (groupBalances.get(g.id) || 0) !== 0).length,
     [groups, groupBalances]
   );
+
+  type SettlementSuggestionRow = {
+    key: string;
+    group_id: string;
+    group_name: string;
+    counterparty_id: string;
+    from_user_id: string;
+    to_user_id: string;
+    amount_cents: number;
+    counterparty_name: string;
+    direction: 'pay' | 'receive';
+  };
+
+  const involvedUserIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const expense of expenses) {
+      ids.add(expense.paid_by_user_id);
+      for (const split of expense.splits || []) ids.add(split.user_id);
+    }
+    return Array.from(ids);
+  }, [expenses]);
+
+  React.useEffect(() => {
+    let cancelled = false;
+    const loadNames = async () => {
+      if (involvedUserIds.length === 0) {
+        setProfileNamesById({});
+        return;
+      }
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('id, full_name')
+        .in('id', involvedUserIds);
+      if (cancelled || error) return;
+      const byId: Record<string, string> = {};
+      for (const row of data || []) {
+        if (row.full_name?.trim()) byId[row.id] = row.full_name.trim();
+      }
+      setProfileNamesById(byId);
+    };
+    void loadNames();
+    return () => {
+      cancelled = true;
+    };
+  }, [involvedUserIds]);
+
+  const settlementSuggestions = useMemo<SettlementSuggestionRow[]>(() => {
+    const pairMap = new Map<string, SettlementSuggestionRow>();
+    const groupName = new Map(groups.map((g) => [g.id, g.name]));
+    for (const expense of expenses) {
+      if (expense.status !== 'confirmed') continue;
+      if (expense.event?.status === 'draft') continue;
+      const splits = expense.splits || [];
+      if (expense.paid_by_user_id === session.user.id) {
+        for (const split of splits) {
+          if (split.user_id === session.user.id) continue;
+          const key = `${expense.group_id}:${split.user_id}:receive`;
+          const row = pairMap.get(key) || {
+            key,
+            group_id: expense.group_id,
+            group_name: groupName.get(expense.group_id) || 'Group',
+            counterparty_id: split.user_id,
+            from_user_id: split.user_id,
+            to_user_id: session.user.id,
+            amount_cents: 0,
+            counterparty_name: profileNamesById[split.user_id] || split.user_id,
+            direction: 'receive' as const,
+          };
+          row.amount_cents += split.share_cents || 0;
+          pairMap.set(key, row);
+        }
+      } else {
+        const mySplit = splits.find((s) => s.user_id === session.user.id);
+        if (!mySplit?.share_cents) continue;
+        const payerName = expense.profiles?.full_name || profileNamesById[expense.paid_by_user_id] || expense.paid_by_user_id;
+        const key = `${expense.group_id}:${expense.paid_by_user_id}:pay`;
+        const row = pairMap.get(key) || {
+          key,
+          group_id: expense.group_id,
+          group_name: groupName.get(expense.group_id) || 'Group',
+          counterparty_id: expense.paid_by_user_id,
+          from_user_id: session.user.id,
+          to_user_id: expense.paid_by_user_id,
+          amount_cents: 0,
+          counterparty_name: payerName,
+          direction: 'pay' as const,
+        };
+        row.amount_cents += mySplit.share_cents;
+        pairMap.set(key, row);
+      }
+    }
+    return Array.from(pairMap.values())
+      .filter((row) => row.amount_cents > 0)
+      .sort((a, b) => b.amount_cents - a.amount_cents);
+  }, [expenses, groups, profileNamesById, session.user.id]);
+
+  const [selectedSettlementKeys, setSelectedSettlementKeys] = useState<string[]>([]);
+  const [editedAmountsByKey, setEditedAmountsByKey] = useState<Record<string, number>>({});
+
+  const parseMoneyToCents = (value: string): number | null => {
+    const normalized = value.replace(/\s/g, '').replace(',', '.');
+    if (!normalized) return null;
+    const amount = Number(normalized);
+    if (!Number.isFinite(amount) || amount < 0) return null;
+    return Math.round(amount * 100);
+  };
+
+  const groupedSettlementSuggestions = useMemo(() => {
+    const byPerson = new Map<
+      string,
+      {
+        personKey: string;
+        counterparty_id: string;
+        counterparty_name: string;
+        direction: 'pay' | 'receive';
+        rows: SettlementSuggestionRow[];
+      }
+    >();
+    for (const row of settlementSuggestions) {
+      const personKey = `${row.direction}:${row.counterparty_id}`;
+      const existing = byPerson.get(personKey);
+      if (existing) {
+        existing.rows.push(row);
+      } else {
+        byPerson.set(personKey, {
+          personKey,
+          counterparty_id: row.counterparty_id,
+          counterparty_name: row.counterparty_name,
+          direction: row.direction,
+          rows: [row],
+        });
+      }
+    }
+    return Array.from(byPerson.values()).map((group) => ({
+      ...group,
+      rows: group.rows.sort((a, b) => b.amount_cents - a.amount_cents),
+    }));
+  }, [settlementSuggestions]);
+
+  const groupedByGroupSuggestions = useMemo(() => {
+    const byGroup = new Map<
+      string,
+      {
+        group_id: string;
+        group_name: string;
+        rows: SettlementSuggestionRow[];
+      }
+    >();
+    for (const row of settlementSuggestions) {
+      const existing = byGroup.get(row.group_id);
+      if (existing) {
+        existing.rows.push(row);
+      } else {
+        byGroup.set(row.group_id, {
+          group_id: row.group_id,
+          group_name: row.group_name,
+          rows: [row],
+        });
+      }
+    }
+    return Array.from(byGroup.values()).map((group) => ({
+      ...group,
+      rows: group.rows.sort((a, b) => b.amount_cents - a.amount_cents),
+    }));
+  }, [settlementSuggestions]);
+
+  const personTotalByKey = useMemo(() => {
+    const totals: Record<string, number> = {};
+    for (const group of groupedSettlementSuggestions) {
+      totals[group.personKey] = group.rows.reduce(
+        (sum, row) => sum + Math.max(0, editedAmountsByKey[row.key] ?? row.amount_cents),
+        0,
+      );
+    }
+    return totals;
+  }, [editedAmountsByKey, groupedSettlementSuggestions]);
+
+  const groupTotalById = useMemo(() => {
+    const totals: Record<string, number> = {};
+    for (const group of groupedByGroupSuggestions) {
+      totals[group.group_id] = group.rows.reduce(
+        (sum, row) => sum + Math.max(0, editedAmountsByKey[row.key] ?? row.amount_cents),
+        0,
+      );
+    }
+    return totals;
+  }, [editedAmountsByKey, groupedByGroupSuggestions]);
+
+  React.useEffect(() => {
+    if (!showSettleModal) return;
+    setSelectedSettlementKeys(settlementSuggestions.map((row) => row.key));
+    setEditedAmountsByKey(
+      settlementSuggestions.reduce<Record<string, number>>((acc, row) => {
+        acc[row.key] = row.amount_cents;
+        return acc;
+      }, {}),
+    );
+    setSettleViewMode('person');
+    setExpandedGroupIds(
+      settlementSuggestions.reduce<Record<string, boolean>>((acc, row) => {
+        acc[row.group_id] = true;
+        return acc;
+      }, {}),
+    );
+    setSettlingError(null);
+  }, [showSettleModal, settlementSuggestions]);
+
+  const updatePersonTotal = useCallback(
+    (personKey: string, totalCents: number) => {
+      const group = groupedSettlementSuggestions.find((g) => g.personKey === personKey);
+      if (!group || group.rows.length === 0) return;
+      const originalTotal = group.rows.reduce((sum, row) => sum + row.amount_cents, 0);
+      if (originalTotal <= 0) return;
+
+      const capped = Math.max(0, totalCents);
+      const provisional = group.rows.map((row) => {
+        const exact = (capped * row.amount_cents) / originalTotal;
+        const floor = Math.floor(exact);
+        return { key: row.key, floor, frac: exact - floor };
+      });
+      let remainder = capped - provisional.reduce((sum, p) => sum + p.floor, 0);
+      provisional.sort((a, b) => b.frac - a.frac);
+      const next: Record<string, number> = {};
+      for (const item of provisional) next[item.key] = item.floor;
+      for (let i = 0; i < provisional.length && remainder > 0; i += 1) {
+        next[provisional[i].key] += 1;
+        remainder -= 1;
+      }
+      setEditedAmountsByKey((prev) => ({ ...prev, ...next }));
+    },
+    [groupedSettlementSuggestions],
+  );
+
+  const updateGroupTotal = useCallback(
+    (groupId: string, totalCents: number) => {
+      const group = groupedByGroupSuggestions.find((g) => g.group_id === groupId);
+      if (!group || group.rows.length === 0) return;
+      const originalTotal = group.rows.reduce((sum, row) => sum + row.amount_cents, 0);
+      if (originalTotal <= 0) return;
+
+      const capped = Math.max(0, totalCents);
+      const provisional = group.rows.map((row) => {
+        const exact = (capped * row.amount_cents) / originalTotal;
+        const floor = Math.floor(exact);
+        return { key: row.key, floor, frac: exact - floor };
+      });
+      let remainder = capped - provisional.reduce((sum, p) => sum + p.floor, 0);
+      provisional.sort((a, b) => b.frac - a.frac);
+      const next: Record<string, number> = {};
+      for (const item of provisional) next[item.key] = item.floor;
+      for (let i = 0; i < provisional.length && remainder > 0; i += 1) {
+        next[provisional[i].key] += 1;
+        remainder -= 1;
+      }
+      setEditedAmountsByKey((prev) => ({ ...prev, ...next }));
+    },
+    [groupedByGroupSuggestions],
+  );
+
+  const handleConfirmSettlements = useCallback(async () => {
+    const selected = settlementSuggestions
+      .filter((row) => selectedSettlementKeys.includes(row.key))
+      .map((row) => ({ ...row, amount_cents: Math.max(0, editedAmountsByKey[row.key] ?? row.amount_cents) }))
+      .filter((row) => row.amount_cents > 0);
+    if (selected.length === 0) {
+      setSettlingError(t('dashboard.settleModalSelectAtLeastOne'));
+      return;
+    }
+    setSettlingLoading(true);
+    setSettlingError(null);
+    try {
+      const now = new Date().toISOString();
+      const payload = selected.map((row) => ({
+        group_id: row.group_id,
+        event_id: null,
+        from_user_id: row.from_user_id,
+        to_user_id: row.to_user_id,
+        amount_cents: row.amount_cents,
+        currency: 'EUR',
+        settled_at: now,
+        note: 'Dashboard settle up',
+        created_by: session.user.id,
+      }));
+      const { error } = await supabase.from('settlements').insert(payload);
+      if (error) throw error;
+      setShowSettleModal(false);
+      navigate('/expenses');
+    } catch (err: unknown) {
+      setSettlingError(err instanceof Error ? err.message : t('dashboard.settleModalSaveError'));
+    } finally {
+      setSettlingLoading(false);
+    }
+  }, [editedAmountsByKey, navigate, selectedSettlementKeys, session.user.id, settlementSuggestions, t]);
 
   /** Convida pessoas a registarem-se na app (partilha ou cópia do URL), não convites de grupo. */
   const handleInviteFriends = useCallback(async () => {
@@ -278,7 +579,7 @@ export function DashboardPage({ session }: DashboardPageProps) {
             <Button
               type="button"
               className="w-full mt-3 py-4 text-lg font-bold bg-emerald-700 hover:bg-emerald-800 text-white shadow-xl shadow-emerald-950/30 ring-2 ring-emerald-800/20 border border-emerald-900/10"
-              onClick={() => navigate('/expenses')}
+              onClick={() => setShowSettleModal(true)}
             >
               <Scale className="w-5 h-5 mr-2 shrink-0" />
               {t('dashboard.settleUpNow')}
@@ -616,6 +917,261 @@ export function DashboardPage({ session }: DashboardPageProps) {
           />
         </Modal>
       )}
+
+      <Modal
+        isOpen={showSettleModal}
+        onClose={() => setShowSettleModal(false)}
+        title={t('dashboard.settleModalTitle')}
+        size="lg"
+      >
+        <div className="space-y-4">
+          <p className="text-sm text-slate-600">{t('dashboard.settleModalSubtitle')}</p>
+          <div className="grid grid-cols-2 gap-2 rounded-xl border border-emerald-200/80 bg-emerald-50/40 p-1.5">
+            <button
+              type="button"
+              onClick={() => setSettleViewMode('person')}
+              className={`rounded-lg px-3 py-2 text-sm font-semibold transition-colors ${
+                settleViewMode === 'person'
+                  ? 'bg-emerald-600 text-white shadow-sm'
+                  : 'bg-white text-emerald-700 ring-1 ring-emerald-200 hover:bg-emerald-50'
+              }`}
+            >
+              {t('dashboard.settleByPerson')}
+            </button>
+            <button
+              type="button"
+              onClick={() => setSettleViewMode('group')}
+              className={`rounded-lg px-3 py-2 text-sm font-semibold transition-colors ${
+                settleViewMode === 'group'
+                  ? 'bg-slate-700 text-white shadow-sm'
+                  : 'bg-white text-slate-700 ring-1 ring-slate-200 hover:bg-slate-50'
+              }`}
+            >
+              {t('dashboard.settleByGroup')}
+            </button>
+          </div>
+          {settlementSuggestions.length === 0 ? (
+            <p className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-6 text-sm text-slate-600">
+              {t('dashboard.settleModalEmpty')}
+            </p>
+          ) : (
+            <div className="space-y-2 max-h-[20rem] overflow-y-auto pr-1">
+              {settleViewMode === 'person' &&
+                groupedSettlementSuggestions.map((group) => {
+                  const allSelected = group.rows.every((row) => selectedSettlementKeys.includes(row.key));
+                  const groupTotal = personTotalByKey[group.personKey] ?? 0;
+                  return (
+                    <div key={group.personKey} className="rounded-xl border border-slate-200 bg-white p-3">
+                      <div className="flex items-start gap-3">
+                        <input
+                          type="checkbox"
+                          className="mt-1 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+                          checked={allSelected}
+                          onChange={() => {
+                            setSelectedSettlementKeys((prev) => {
+                              const withoutGroup = prev.filter((k) => !group.rows.some((r) => r.key === k));
+                              if (allSelected) return withoutGroup;
+                              return [...withoutGroup, ...group.rows.map((r) => r.key)];
+                            });
+                          }}
+                        />
+                        <div className="min-w-0 flex-1">
+                          <p className="text-sm font-semibold text-slate-900">
+                            {group.direction === 'pay'
+                              ? t('dashboard.settleModalPayLine', {
+                                  amount: formatCurrencyCents(groupTotal),
+                                  name: group.counterparty_name,
+                                })
+                              : t('dashboard.settleModalReceiveLine', {
+                                  amount: formatCurrencyCents(groupTotal),
+                                  name: group.counterparty_name,
+                                })}
+                          </p>
+                          <div className="mt-2 flex items-center gap-2">
+                            <input
+                              type="text"
+                              value={(groupTotal / 100).toFixed(2)}
+                              onChange={(e) => {
+                                const cents = parseMoneyToCents(e.target.value);
+                                if (cents == null) {
+                                  return;
+                                }
+                                updatePersonTotal(group.personKey, cents);
+                              }}
+                              className="w-28 rounded-md border border-slate-200 bg-slate-50 px-2 py-1 text-sm text-right"
+                            />
+                            <span className="text-xs text-slate-500">EUR</span>
+                          </div>
+                          <div className="mt-2 space-y-1.5">
+                            {group.rows.map((row) => {
+                              const selected = selectedSettlementKeys.includes(row.key);
+                              const amount = Math.max(0, editedAmountsByKey[row.key] ?? row.amount_cents);
+                              return (
+                                <label
+                                  key={row.key}
+                                  className={`flex items-center gap-2 rounded-lg border px-2 py-1.5 ${
+                                    selected ? 'border-blue-200 bg-blue-50/50' : 'border-slate-200 bg-slate-50'
+                                  }`}
+                                >
+                                  <input
+                                    type="checkbox"
+                                    className="rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+                                    checked={selected}
+                                    onChange={() =>
+                                      setSelectedSettlementKeys((prev) =>
+                                        prev.includes(row.key) ? prev.filter((k) => k !== row.key) : [...prev, row.key],
+                                      )
+                                    }
+                                  />
+                                  <span className="min-w-0 flex-1 text-xs text-slate-700">{row.group_name}</span>
+                                  <input
+                                    type="text"
+                                    value={(amount / 100).toFixed(2)}
+                                    onChange={(e) => {
+                                      const cents = parseMoneyToCents(e.target.value);
+                                      if (cents == null) return;
+                                      setEditedAmountsByKey((prev) => ({ ...prev, [row.key]: cents }));
+                                    }}
+                                    className="w-24 rounded-md border border-slate-200 bg-white px-2 py-1 text-xs text-right"
+                                  />
+                                </label>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              {settleViewMode === 'group' &&
+                groupedByGroupSuggestions.map((group) => {
+                  const isExpanded = expandedGroupIds[group.group_id] ?? true;
+                  const allSelected = group.rows.every((row) => selectedSettlementKeys.includes(row.key));
+                  const groupTotal = groupTotalById[group.group_id] ?? 0;
+                  return (
+                    <div key={group.group_id} className="rounded-xl border border-slate-200 bg-white p-3">
+                      <div className="flex items-start gap-3">
+                        <input
+                          type="checkbox"
+                          className="mt-1 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+                          checked={allSelected}
+                          onChange={() => {
+                            setSelectedSettlementKeys((prev) => {
+                              const withoutGroup = prev.filter((k) => !group.rows.some((r) => r.key === k));
+                              if (allSelected) return withoutGroup;
+                              return [...withoutGroup, ...group.rows.map((r) => r.key)];
+                            });
+                          }}
+                        />
+                        <div className="min-w-0 flex-1">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setExpandedGroupIds((prev) => ({ ...prev, [group.group_id]: !(prev[group.group_id] ?? true) }))
+                            }
+                            className="flex w-full items-center justify-between gap-2 text-left"
+                          >
+                            <p className="text-sm font-semibold text-slate-900">
+                              {t('dashboard.settleInGroupLine', {
+                                group: group.group_name,
+                                amount: formatCurrencyCents(groupTotal),
+                              })}
+                            </p>
+                            {isExpanded ? (
+                              <ChevronUp className="h-4 w-4 text-slate-500" />
+                            ) : (
+                              <ChevronDown className="h-4 w-4 text-slate-500" />
+                            )}
+                          </button>
+                          <div className="mt-2 flex items-center gap-2">
+                            <input
+                              type="text"
+                              value={(groupTotal / 100).toFixed(2)}
+                              onChange={(e) => {
+                                const cents = parseMoneyToCents(e.target.value);
+                                if (cents == null) {
+                                  return;
+                                }
+                                updateGroupTotal(group.group_id, cents);
+                              }}
+                              className="w-28 rounded-md border border-slate-200 bg-slate-50 px-2 py-1 text-sm text-right"
+                            />
+                            <span className="text-xs text-slate-500">EUR</span>
+                          </div>
+                          {isExpanded && (
+                            <div className="mt-2 space-y-1.5">
+                              {group.rows.map((row) => {
+                                const selected = selectedSettlementKeys.includes(row.key);
+                                const amount = Math.max(0, editedAmountsByKey[row.key] ?? row.amount_cents);
+                                return (
+                                  <label
+                                    key={row.key}
+                                    className={`flex items-center gap-2 rounded-lg border px-2 py-1.5 ${
+                                      selected ? 'border-blue-200 bg-blue-50/50' : 'border-slate-200 bg-slate-50'
+                                    }`}
+                                  >
+                                    <input
+                                      type="checkbox"
+                                      className="rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+                                      checked={selected}
+                                      onChange={() =>
+                                        setSelectedSettlementKeys((prev) =>
+                                          prev.includes(row.key) ? prev.filter((k) => k !== row.key) : [...prev, row.key],
+                                        )
+                                      }
+                                    />
+                                    <span className="min-w-0 flex-1 text-xs text-slate-700">
+                                      {row.direction === 'pay'
+                                        ? t('dashboard.settleModalPayLine', {
+                                            amount: formatCurrencyCents(amount),
+                                            name: row.counterparty_name,
+                                          })
+                                        : t('dashboard.settleModalReceiveLine', {
+                                            amount: formatCurrencyCents(amount),
+                                            name: row.counterparty_name,
+                                          })}
+                                    </span>
+                                    <input
+                                      type="text"
+                                      value={(amount / 100).toFixed(2)}
+                                      onChange={(e) => {
+                                        const cents = parseMoneyToCents(e.target.value);
+                                        if (cents == null) return;
+                                        setEditedAmountsByKey((prev) => ({ ...prev, [row.key]: cents }));
+                                      }}
+                                      className="w-24 rounded-md border border-slate-200 bg-white px-2 py-1 text-xs text-right"
+                                    />
+                                  </label>
+                                );
+                              })}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+            </div>
+          )}
+          {settlingError && (
+            <p className="text-xs text-red-600 rounded-lg border border-red-200 bg-red-50 px-3 py-2">{settlingError}</p>
+          )}
+          <div className="flex gap-3">
+            <Button type="button" variant="secondary" className="flex-1" onClick={() => setShowSettleModal(false)}>
+              {t('common.cancel')}
+            </Button>
+            <Button
+              type="button"
+              className="flex-[2]"
+              onClick={() => void handleConfirmSettlements()}
+              loading={settlingLoading}
+              disabled={settlementSuggestions.length === 0}
+            >
+              {t('dashboard.settleModalConfirm')}
+            </Button>
+          </div>
+        </div>
+      </Modal>
 
       <Modal
         isOpen={showSettleHelp}

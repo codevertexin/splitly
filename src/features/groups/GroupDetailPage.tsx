@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useParams, useNavigate } from 'react-router-dom';
 import { Session } from '@supabase/supabase-js';
@@ -93,6 +93,9 @@ export function GroupDetailPage({ session }: GroupDetailPageProps) {
   const [isExpenseModalOpen, setIsExpenseModalOpen] = useState(false);
   const [createEventModalOpen, setCreateEventModalOpen] = useState(false);
   const [isManageModalOpen, setIsManageModalOpen] = useState(false);
+  const [requestingUserIds, setRequestingUserIds] = useState<Set<string>>(new Set());
+  const [requestedUserIds, setRequestedUserIds] = useState<Set<string>>(new Set());
+  const [requestFeedback, setRequestFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
   const [editingExpense, setEditingExpense] = useState<GroupExpenseRow | null>(null);
   const [editTitle, setEditTitle] = useState('');
   const [editAmount, setEditAmount] = useState('');
@@ -144,7 +147,16 @@ export function GroupDetailPage({ session }: GroupDetailPageProps) {
 
   useEffect(() => {
     setGroup(null);
+    setRequestedUserIds(new Set());
+    setRequestingUserIds(new Set());
+    setRequestFeedback(null);
   }, [id]);
+
+  useEffect(() => {
+    if (!requestFeedback) return;
+    const timeout = window.setTimeout(() => setRequestFeedback(null), 3000);
+    return () => window.clearTimeout(timeout);
+  }, [requestFeedback]);
 
   useEffect(() => {
     if (!loading && groups.length > 0 && id) {
@@ -158,6 +170,58 @@ export function GroupDetailPage({ session }: GroupDetailPageProps) {
   const handleSettleUp = async () => {
     await new Promise((resolve) => setTimeout(resolve, 1000));
   };
+
+  const handleRequestPayment = useCallback(
+    async (targetUserId: string, amountCents: number, targetName: string) => {
+      if (!group) return;
+      if (requestingUserIds.has(targetUserId) || requestedUserIds.has(targetUserId)) return;
+
+      setRequestingUserIds((prev) => {
+        const next = new Set(prev);
+        next.add(targetUserId);
+        return next;
+      });
+      setRequestFeedback(null);
+
+      try {
+        const { data, error } = await supabase.functions.invoke('create-payment-request', {
+          body: {
+            group_id: group.id,
+            target_user_id: targetUserId,
+            amount_cents: amountCents,
+            currency: (group as any).currency || 'EUR',
+          },
+        });
+        if (error) throw error;
+        if (data && typeof data === 'object' && 'error' in data && (data as { error?: string }).error) {
+          throw new Error(String((data as { error: string }).error));
+        }
+
+        setRequestedUserIds((prev) => {
+          const next = new Set(prev);
+          next.add(targetUserId);
+          return next;
+        });
+        setRequestFeedback({
+          type: 'success',
+          message: t('groupDetail.paymentRequestSentTo', { name: targetName }),
+        });
+      } catch (err: unknown) {
+        if (import.meta.env.DEV) console.error('create-payment-request failed:', err);
+        setRequestFeedback({
+          type: 'error',
+          message: t('groupDetail.paymentRequestFailed'),
+        });
+      } finally {
+        setRequestingUserIds((prev) => {
+          const next = new Set(prev);
+          next.delete(targetUserId);
+          return next;
+        });
+      }
+    },
+    [group, requestingUserIds, requestedUserIds, t],
+  );
 
   const handleCreateEvent = async (
     title: string,
@@ -417,6 +481,10 @@ export function GroupDetailPage({ session }: GroupDetailPageProps) {
         }}
         canEditExpense={canEditExpense}
         onEditExpense={openEditExpense}
+        onRequestPayment={handleRequestPayment}
+        requestingUserIds={requestingUserIds}
+        requestedUserIds={requestedUserIds}
+        requestFeedback={requestFeedback}
         inviteModalProps={{
           isOpen: isInviteModalOpen,
           onClose: () => setIsInviteModalOpen(false),

@@ -536,7 +536,7 @@ export function EventDetail({ event, onBack, onAddParticipant, onRefresh, onUpda
             <Plus className="mr-1.5 h-4 w-4" />
             {t('eventDetail.quickAddExpense')}
           </Button>
-          {event.status === 'draft' && hasAnyExpenses && (
+          {event.status === 'draft' && hasAnyExpenses && canEditEvent && (
             <div className="flex flex-col items-end gap-2">
               <Button
                 type="button"

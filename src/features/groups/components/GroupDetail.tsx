@@ -52,8 +52,12 @@ interface GroupDetailProps {
   isOwner?: boolean;
   onManageGroup?: () => void;
   onOpenAddExpense: () => void;
+  onRequestPayment?: (targetUserId: string, amountCents: number, targetName: string) => Promise<void> | void;
   canEditExpense: (expense: GroupExpenseRow) => boolean;
   onEditExpense: (expense: GroupExpenseRow) => void;
+  requestingUserIds?: Set<string>;
+  requestedUserIds?: Set<string>;
+  requestFeedback?: { type: 'success' | 'error'; message: string } | null;
   inviteModalProps: {
     isOpen: boolean;
     onClose: () => void;
@@ -177,8 +181,12 @@ export function GroupDetail({
   isOwner = false,
   onManageGroup,
   onOpenAddExpense,
+  onRequestPayment,
   canEditExpense,
   onEditExpense,
+  requestingUserIds,
+  requestedUserIds,
+  requestFeedback,
   inviteModalProps,
   actionLoading,
   onRetryBalance,
@@ -701,6 +709,17 @@ export function GroupDetail({
 
           <section className="mb-8">
             <h3 className="mb-4 text-base font-bold tracking-tight text-slate-900">{t('groupDetail.whoOwesWhoHeading')}</h3>
+            {requestFeedback && (
+              <div
+                className={`mb-3 rounded-xl border px-3 py-2 text-sm ${
+                  requestFeedback.type === 'success'
+                    ? 'border-emerald-200 bg-emerald-50 text-emerald-900'
+                    : 'border-red-200 bg-red-50 text-red-800'
+                }`}
+              >
+                {requestFeedback.message}
+              </div>
+            )}
             {membersLoading ? (
               <div className="flex items-center gap-2 text-sm text-slate-400">
                 <Loader2 className="h-5 w-5 shrink-0 animate-spin" />
@@ -716,7 +735,11 @@ export function GroupDetail({
                       <div className="rounded-2xl border border-emerald-200/80 bg-emerald-50/40 p-4 sm:p-5">
                         <p className="mb-3 text-sm font-bold text-emerald-900">{t('groupDetail.sectionYouAreOwed')}</p>
                         <ul className="space-y-2.5">
-                          {theyOweYou.map((row) => (
+                          {theyOweYou.map((row) => {
+                            const isRequesting = requestingUserIds?.has(row.member.user_id) ?? false;
+                            const isRequested = requestedUserIds?.has(row.member.user_id) ?? false;
+                            const targetName = memberLabel(row.member);
+                            return (
                             <li
                               key={row.member.user_id}
                               className="flex flex-wrap items-center gap-2 rounded-xl border border-emerald-100/90 bg-white/90 px-3.5 py-3 shadow-sm sm:gap-3 sm:px-4"
@@ -738,14 +761,30 @@ export function GroupDetail({
                                 type="button"
                                 onClick={(e) => {
                                   e.stopPropagation();
-                                  navigate(`/groups/${group.id}#group-expenses`);
+                                  void onRequestPayment?.(row.member.user_id, Math.abs(row.netIOCents), targetName);
                                 }}
-                                className="shrink-0 rounded-lg border border-emerald-300/90 bg-white px-3 py-1.5 text-xs font-semibold text-emerald-900 shadow-sm transition-colors hover:bg-emerald-50"
+                                disabled={isRequesting || isRequested}
+                                className={`shrink-0 rounded-lg px-3 py-1.5 text-xs font-semibold shadow-sm transition-colors ${
+                                  isRequested
+                                    ? 'border border-emerald-600 bg-emerald-600 text-white'
+                                    : isRequesting
+                                      ? 'border border-emerald-300/90 bg-emerald-50 text-emerald-900'
+                                      : 'border border-emerald-300/90 bg-white text-emerald-900 hover:bg-emerald-50'
+                                }`}
                               >
-                                {t('groupDetail.rowRequestPayment')}
+                                <span className="inline-flex items-center gap-1">
+                                  {isRequested && <CheckCircle2 className="h-3.5 w-3.5" />}
+                                  {isRequesting && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                                  {isRequested
+                                    ? t('groupDetail.requestedPayment')
+                                    : isRequesting
+                                      ? t('groupDetail.requestSending')
+                                      : t('groupDetail.rowRequestPayment')}
+                                </span>
                               </button>
                             </li>
-                          ))}
+                            );
+                          })}
                         </ul>
                       </div>
                     )}

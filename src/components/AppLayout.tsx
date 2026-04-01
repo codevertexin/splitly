@@ -16,10 +16,15 @@ import {
   ContactRound,
   ChevronDown,
   CircleHelp,
+  Receipt,
+  CalendarCheck2,
+  AlertTriangle,
+  Loader2,
 } from 'lucide-react';
 import { Button } from './ui/Button';
 import { MemberAvatar } from './MemberAvatar';
 import { useUserProfile } from '../hooks/useUserProfile';
+import { useNotifications } from '../hooks/useNotifications';
 
 interface AppLayoutProps {
   session: Session;
@@ -34,32 +39,61 @@ const NAV_DEFS = [
   { id: 'contacts' as const, icon: ContactRound, path: '/people' },
 ];
 
+function notificationIcon(type: string) {
+  if (type === 'payment_request') return Receipt;
+  if (type === 'event_ready_to_finalize') return CalendarCheck2;
+  if (type === 'draft_expenses_need_review') return AlertTriangle;
+  return Bell;
+}
+
+function formatNotificationDate(value: string, locale: string) {
+  const dt = new Date(value);
+  if (Number.isNaN(dt.getTime())) return '';
+  const diffMs = dt.getTime() - Date.now();
+  const absSec = Math.abs(Math.round(diffMs / 1000));
+  const rtf = new Intl.RelativeTimeFormat(locale, { numeric: 'auto' });
+  if (absSec < 60) return rtf.format(Math.round(diffMs / 1000), 'second');
+  const absMin = Math.abs(Math.round(diffMs / 60000));
+  if (absMin < 60) return rtf.format(Math.round(diffMs / 60000), 'minute');
+  const absHours = Math.abs(Math.round(diffMs / 3600000));
+  if (absHours < 24) return rtf.format(Math.round(diffMs / 3600000), 'hour');
+  const absDays = Math.abs(Math.round(diffMs / 86400000));
+  if (absDays < 7) return rtf.format(Math.round(diffMs / 86400000), 'day');
+  return new Intl.DateTimeFormat(locale, { day: '2-digit', month: 'short' }).format(dt);
+}
+
 export function AppLayout({ session }: AppLayoutProps) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const { profile } = useUserProfile(session.user.id);
   const location = useLocation();
   const navigate = useNavigate();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
+  const [notificationsOpen, setNotificationsOpen] = useState(false);
   const appLogoSrc = '/logo-splitly-app.png';
 
   const mobileMenuRef = useRef<HTMLDivElement>(null);
   const userMenuRef = useRef<HTMLDivElement>(null);
+  const notificationsRef = useRef<HTMLDivElement>(null);
+  const { notifications, unreadCount, loading: notificationsLoading, error: notificationsError, markAsRead, markAllAsRead } =
+    useNotifications(session);
 
   const activeTab = location.pathname.split('/')[1] || 'dashboard';
 
   useEffect(() => {
-    if (!mobileMenuOpen && !userMenuOpen) return;
+    if (!mobileMenuOpen && !userMenuOpen && !notificationsOpen) return;
     const handleClickOutside = (e: MouseEvent) => {
       const t = e.target as Node;
       if (mobileMenuRef.current?.contains(t)) return;
       if (userMenuRef.current?.contains(t)) return;
+      if (notificationsRef.current?.contains(t)) return;
       setMobileMenuOpen(false);
       setUserMenuOpen(false);
+      setNotificationsOpen(false);
     };
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, [mobileMenuOpen, userMenuOpen]);
+  }, [mobileMenuOpen, userMenuOpen, notificationsOpen]);
 
   const handleSignOut = async () => {
     localStorage.removeItem('splitly_last_group_id');
@@ -80,7 +114,15 @@ export function AppLayout({ session }: AppLayoutProps) {
     navigate(path);
     setMobileMenuOpen(false);
     setUserMenuOpen(false);
+    setNotificationsOpen(false);
   };
+
+  const locale = useMemo(() => {
+    if (i18n.language === 'pt-PT') return 'pt-PT';
+    if (i18n.language === 'pt-BR') return 'pt-BR';
+    if (i18n.language === 'es') return 'es';
+    return 'en';
+  }, [i18n.language]);
 
   return (
     <div className="min-h-screen bg-[#F8FAFC] flex font-sans">
@@ -191,14 +233,134 @@ export function AppLayout({ session }: AppLayoutProps) {
           <div className="flex-1" />
 
           <div className="flex items-center gap-2 sm:gap-3 shrink-0">
-            <button
-              type="button"
-              className="p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-50 rounded-xl transition-all relative"
-              aria-label={t('layout.notifications')}
-            >
-              <Bell className="w-5 h-5" />
-              <span className="absolute top-2 right-2 w-2 h-2 bg-red-500 rounded-full border-2 border-white" />
-            </button>
+            <div ref={notificationsRef} className="relative">
+              <button
+                type="button"
+                onClick={() => {
+                  setNotificationsOpen((o) => !o);
+                  setUserMenuOpen(false);
+                  setMobileMenuOpen(false);
+                }}
+                className="p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-50 rounded-xl transition-all relative"
+                aria-label={t('layout.notifications')}
+                aria-expanded={notificationsOpen}
+                aria-haspopup="menu"
+              >
+                <Bell className="w-5 h-5" />
+                {unreadCount > 0 && (
+                  <span className="absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] px-1 rounded-full bg-red-500 text-white text-[10px] font-bold leading-[18px] text-center border-2 border-white">
+                    {unreadCount > 9 ? '9+' : unreadCount}
+                  </span>
+                )}
+              </button>
+              {notificationsOpen && (
+                <div className="absolute right-0 top-full mt-2 w-[22rem] max-w-[calc(100vw-2rem)] rounded-2xl border border-slate-100 bg-white shadow-lg z-50">
+                  <div className="flex items-center justify-between px-4 py-3 border-b border-slate-100">
+                    <div className="flex items-center gap-2">
+                      <p className="text-sm font-bold text-slate-900">{t('layout.notifications')}</p>
+                      {unreadCount > 0 && (
+                        <span className="rounded-full bg-blue-50 px-2 py-0.5 text-xs font-semibold text-blue-700">
+                          {unreadCount}
+                        </span>
+                      )}
+                    </div>
+                    {unreadCount > 0 && (
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          try {
+                            await markAllAsRead();
+                          } catch {
+                            // noop for v1
+                          }
+                        }}
+                        className="text-xs font-semibold text-blue-600 hover:text-blue-700"
+                      >
+                        {t('layout.markAllAsRead')}
+                      </button>
+                    )}
+                  </div>
+                  <div className="max-h-[22rem] overflow-y-auto">
+                    {notificationsLoading ? (
+                      <div className="px-4 py-6 text-sm text-slate-500 flex items-center gap-2">
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                        {t('layout.loadingNotifications')}
+                      </div>
+                    ) : notificationsError ? (
+                      <div className="px-4 py-6 text-sm text-red-600">{notificationsError}</div>
+                    ) : notifications.length === 0 ? (
+                      <div className="px-4 py-6">
+                        <p className="text-sm font-semibold text-slate-700">{t('layout.noNotifications')}</p>
+                        <p className="mt-1 text-xs text-slate-500">{t('layout.notificationsEmptyHint')}</p>
+                      </div>
+                    ) : (
+                      <ul className="py-1">
+                        {notifications.map((item) => {
+                          const Icon = notificationIcon(item.type);
+                          const title =
+                            item.title ||
+                            (item.type === 'payment_request'
+                              ? t('layout.notificationTypePaymentRequest')
+                              : item.type === 'event_ready_to_finalize'
+                                ? t('layout.notificationTypeEventReady')
+                                : item.type === 'draft_expenses_need_review'
+                                  ? t('layout.notificationTypeDraftReview')
+                                  : t('layout.notificationTypeGeneral'));
+                          return (
+                            <li key={item.id}>
+                              <button
+                                type="button"
+                                onClick={async () => {
+                                  try {
+                                    await markAsRead(item.id);
+                                  } catch {
+                                    // noop for v1
+                                  }
+                                  setNotificationsOpen(false);
+                                  if (item.cta_url) navigate(item.cta_url);
+                                }}
+                                className={`w-full text-left px-4 py-3 flex items-start gap-3 hover:bg-slate-50 transition-colors ${
+                                  item.is_read ? 'bg-white' : 'bg-blue-50/40'
+                                }`}
+                              >
+                                <span className="mt-0.5 relative">
+                                  <Icon className="w-4 h-4 text-slate-500" />
+                                  {!item.is_read && <span className="absolute -top-1 -right-1 w-2 h-2 rounded-full bg-blue-600" />}
+                                </span>
+                                <span className="min-w-0 flex-1">
+                                  <span className="block text-sm font-semibold text-slate-800 truncate">{title}</span>
+                                  {item.body && <span className="mt-0.5 block text-xs text-slate-600 line-clamp-2">{item.body}</span>}
+                                  <span className="mt-1 block text-[11px] text-slate-400">
+                                    {formatNotificationDate(item.created_at, locale)}
+                                  </span>
+                                </span>
+                                {item.cta_label && item.cta_url && (
+                                  <span
+                                    onClick={async (e) => {
+                                      e.stopPropagation();
+                                      try {
+                                        await markAsRead(item.id);
+                                      } catch {
+                                        // noop for v1
+                                      }
+                                      setNotificationsOpen(false);
+                                      navigate(item.cta_url as string);
+                                    }}
+                                    className="shrink-0 rounded-lg border border-slate-200 px-2 py-1 text-[11px] font-semibold text-slate-700 hover:bg-slate-100"
+                                  >
+                                    {item.cta_label}
+                                  </span>
+                                )}
+                              </button>
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
 
             <div ref={mobileMenuRef} className="relative md:hidden">
               <button
