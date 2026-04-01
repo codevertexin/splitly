@@ -205,9 +205,8 @@ export function EventDetail({ event, onBack, onAddParticipant, onRefresh, onUpda
     .sort((a, b) => new Date(b.incurred_at).getTime() - new Date(a.incurred_at).getTime());
   const confirmedExpenses = event.expenses
     .filter((expense) => expense.status === 'confirmed')
-  const hasAnyExpenses = event.expenses.length > 0;
-
     .sort((a, b) => new Date(b.incurred_at).getTime() - new Date(a.incurred_at).getTime());
+  const hasAnyExpenses = event.expenses.length > 0;
 
   const timingPhase = useMemo(
     () => getEventTimingPhase(event.starts_at, event.ends_at),
