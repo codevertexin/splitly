@@ -32,7 +32,10 @@
     "signIn": "Entrar",
     "toggleToSignIn": "Já tem conta? Entrar",
     "toggleToSignUp": "Não tem conta? Cadastrar",
-    "confirmEmail": "Confira seu e-mail para o link de confirmação!"
+    "confirmEmail": "Confira seu e-mail para o link de confirmação!",
+    "displayName": "Seu nome",
+    "displayNamePlaceholder": "Como os amigos te veem",
+    "displayNameTooShort": "Digite um nome com pelo menos 2 caracteres."
   },
   "layout": {
     "nav": {
@@ -88,12 +91,16 @@
     "descriptionPlaceholder": "Para que foi essa despesa?",
     "detectedSuggestion": "Sugestão detectada",
     "invalidAmount": "Digite um valor válido",
+    "cannotAddToClosedEvent": "Não é possível adicionar despesas a um evento fechado.",
+    "eventNotFound": "Evento não encontrado ou não está mais disponível.",
+    "eventGroupMismatch": "Esse evento não pertence ao grupo selecionado.",
     "createFailed": "Não foi possível adicionar a despesa",
     "updateFailed": "Não foi possível atualizar a despesa",
     "submit": "Adicionar despesa",
     "saveChanges": "Salvar alterações",
     "editTitle": "Editar despesa",
-    "editAction": "Editar despesa"
+    "editAction": "Editar despesa",
+    "onboardingFirstExpenseTip": "Dica: divida esta despesa com outras pessoas - nós cuidamos dos saldos automaticamente."
   },
   "settings": {
     "title": "Configurações",
@@ -138,6 +145,10 @@
   },
   "dashboard": {
     "welcome": "Bem-vindo, {{name}}!",
+    "someone": "alguém",
+    "onboardingWelcomeTitle": "Bem-vindo!",
+    "onboardingWelcomeDescription": "Divida despesas com amigos, viagens e eventos.",
+    "onboardingWelcomeCta": "Crie seu primeiro grupo",
     "subtitle": "Gerencie despesas em grupo e divida contas facilmente.",
     "inviteTitle": "Convide amigos e divida despesas sem esforço!",
     "inviteTitleShort": "Convidar amigos",
@@ -241,6 +252,7 @@
     "you": "Você",
     "createdAt": "Criado em",
     "refreshParticipantsFailed": "Não foi possível atualizar os participantes do evento",
+    "dataRefreshFailed": "Não foi possível recarregar os dados mais recentes. A alteração pode ter sido salva — tente novamente ou atualize a página.",
     "addParticipantFailed": "Não foi possível adicionar participante",
     "errorLoadingEvent": "Erro ao carregar evento",
     "eventNotFound": "Evento não encontrado",
@@ -463,7 +475,10 @@
     "statusActive": "Ativos",
     "statusArchived": "Arquivados",
     "statusAll": "Todos",
-    "empty": "Nenhum grupo encontrado. Crie um acima para começar!"
+    "empty": "Nenhum grupo encontrado. Crie um acima para começar!",
+    "emptyOnboardingTitle": "Crie seu primeiro grupo",
+    "emptyOnboardingDescription": "Comece a acompanhar despesas compartilhadas com amigos",
+    "emptyOnboardingCta": "Criar grupo"
   },
   "createGroup": {
     "nameLabel": "Nome do grupo",
@@ -472,7 +487,8 @@
     "descriptionPlaceholder": "Despesas compartilhadas para...",
     "cancel": "Cancelar",
     "submit": "Criar grupo",
-    "createFailed": "Não foi possível criar o grupo"
+    "createFailed": "Não foi possível criar o grupo",
+    "createSuccess": "Grupo criado com sucesso."
   },
   "groupCard": {
     "youOwe": "Você deve {{amount}}",
@@ -492,6 +508,24 @@
     "settleRecordedError": "Não foi possível salvar os acertos.",
     "settleNothingToRecord": "Não há nada para registrar no momento. Tente depois que as despesas sincronizem ou use Acertar contas no painel.",
     "dismissNotice": "Fechar",
+    "onboardingNextExpenseBanner": "Grupo criado - próximo passo: adicione sua primeira despesa",
+    "firstExpenseSuccessBanner": "Despesa salva — os saldos e “quem deve a quem” atualizam abaixo.",
+    "soloMemberInviteNudge": "Você ainda está sozinho neste grupo. Convide alguém para dividir e acertar contas.",
+    "tabOverview": "Resumo",
+    "tabExpenses": "Despesas",
+    "tabMembers": "Pessoas",
+    "membersSectionTitle": "Pessoas neste grupo",
+    "membersSectionSubtitle": "{{count}} pessoas neste grupo",
+    "membersInviteCta": "Convidar mais pessoas",
+    "membersSearchPlaceholder": "Buscar por nome…",
+    "membersNoMatch": "Ninguém corresponde à busca.",
+    "memberRoleOwner": "Dono",
+    "memberRoleMember": "Membro",
+    "memberYou": "Você",
+    "memberBalanceEven": "Acertado com você",
+    "memberYouOweThem": "Você deve {{amount}}",
+    "memberTheyOweYou": "Te deve {{amount}}",
+    "onboardingSettlementHint": "Você pode solicitar pagamentos para acertar os saldos",
     "totalExpenses": "Despesas totais",
     "yourBalance": "Seu saldo",
     "netPositionLabel": "Posição líquida neste grupo",
@@ -539,6 +573,7 @@
     "whoOwesWhoEmptyEven": "Tudo acertado — bom trabalho",
     "sectionTotalLabel": "Total",
     "noExpenses": "Ainda não há despesas",
+    "noExpensesDescription": "Adicione sua primeira despesa para começar a acompanhar saldos",
     "noDraftExpenses": "Não existem despesas em rascunho neste grupo.",
     "addFirstExpense": "Adicionar despesa",
     "addExpense": "Adicionar despesa",
@@ -582,6 +617,23 @@
     "settleHelpBody": "Calculamos quem deve a quem com base nas despesas compartilhadas. Ao acertar contas, você registra pagamentos para que todos fiquem com saldo zero.",
     "settleHelpLearnMore": "Saber mais"
   },
+  "groupOnboarding": {
+    "title": "Vamos começar",
+    "subtitle": "Adicione a primeira despesa para ver quem deve a quem — ou convide pessoas para dividir com você.",
+    "draftsHint": "Você tem despesas em rascunho: confirme-as quando estiver pronto para contarem nos saldos.",
+    "ctaFirstExpense": "Adicionar primeira despesa",
+    "ctaInvite": "Convidar pessoas",
+    "ctaEvent": "Criar evento"
+  },
+  "profileNameGate": {
+    "title": "Como devemos te chamar?",
+    "body": "Escolha um nome que seus amigos reconheçam nos grupos e despesas.",
+    "nameLabel": "Nome visível",
+    "namePlaceholder": "ex.: João ou João Silva",
+    "continue": "Continuar",
+    "nameTooShort": "Digite pelo menos 2 caracteres.",
+    "saveFailed": "Não foi possível salvar. Tente de novo."
+  },
   "manageGroup": {
     "title": "Gerenciar grupo",
     "saveChanges": "Salvar alterações",
@@ -623,6 +675,7 @@
     "adjustedToSettleBalances": "Pré-visualização da divisão ajustada",
     "adjustedPreviewLine": "{{name}} paga {{adjusted}} em vez de {{base}}",
     "settleSuggestionNote": "Você pode mudar para divisão manual para editar valores. Este recurso só altera a divisão desta despesa, não os registros de acerto.",
+    "onboardingFirstExpenseTip": "Dica: divida esta despesa com outras pessoas - nós cuidamos dos saldos automaticamente.",
     "splitEqual": "Divisão igual",
     "splitManual": "Por participante",
     "splitPercentage": "Por porcentagem",
@@ -661,14 +714,21 @@
   },
   "invite": {
     "missingToken": "Token de convite ausente.",
-    "groupIdMissing": "ID do grupo não retornado por accept-invite.",
+    "groupIdMissing": "Não foi possível concluir este convite. Tente de novo ou peça um novo link.",
     "joinFailed": "Não foi possível entrar no grupo. O convite pode ser inválido ou ter expirado.",
     "joiningTitle": "Entrando no grupo...",
     "joiningBody": "Aguarde enquanto processamos seu convite.",
     "errorTitle": "Erro no convite",
+    "errorExpired": "Este convite expirou. Peça a um membro um novo link.",
+    "errorUsed": "Este link de convite não é mais válido.",
+    "errorInvalid": "Este link de convite é inválido.",
+    "errorAuth": "Você precisa estar logado para aceitar um convite.",
+    "errorServer": "Algo deu errado do nosso lado. Tente novamente em instantes.",
     "goToDashboard": "Ir para o painel",
     "successTitle": "Você entrou no grupo!",
     "successBody": "Seu acesso foi adicionado com sucesso.",
+    "successAlreadyMemberTitle": "Você já está neste grupo",
+    "successAlreadyMemberBody": "Sua participação está ativa. Você pode abrir o grupo quando quiser.",
     "viewGroup": "Ver grupo"
   },
   "inviteModal": {
@@ -676,9 +736,11 @@
     "generating": "Gerando link de convite...",
     "close": "Fechar",
     "shareHint": "Compartilhe este link com seus amigos para convidá-los para este grupo.",
+    "readySuccess": "Link de convite pronto — compartilhe com seus amigos",
     "copied": "Copiado!",
     "copyLink": "Copiar link",
-    "share": "Compartilhar",
+    "shareWhatsApp": "Compartilhar via WhatsApp",
+    "sendEmail": "Enviar e-mail",
     "shareTitle": "Entre no meu grupo no Splitly",
     "shareText": "Entre no meu grupo no Splitly para dividir despesas facilmente!"
   },

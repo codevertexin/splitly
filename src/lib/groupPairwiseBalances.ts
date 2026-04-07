@@ -34,6 +34,7 @@ export function buildCounterpartyRows(
         user_id: id,
         role: 'member',
         full_name: null,
+        username: null,
         avatar_url: null,
       });
     }

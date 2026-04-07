@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { AlertCircle } from 'lucide-react';
 import { Session } from '@supabase/supabase-js';
@@ -11,6 +11,7 @@ import { CreateExpenseInput } from '../../../hooks/useGroupExpenses';
 import { formatCentsAsDecimal, formatCurrencyCents, formatDecimal } from '../../../lib/dateTime';
 import { isAccountingEligibleExpenseRow } from '../../../lib/accountingExpenses';
 import { supabase } from '../../../lib/supabase';
+import { EXPENSES_CHANGED_EVENT, expensesChangedAffectsGroup } from '../../../lib/expenseEvents';
 import {
   buildEqualSharesCents,
   canApplySettlementAwareEqualSplit,
@@ -19,6 +20,8 @@ import {
   runSettlementAwareSelfChecks,
   suggestSettlementAwareEqualSplit,
 } from '../../../lib/settlementSplit';
+import { getOnboardingState } from '../../../lib/onboardingState';
+import { trackProductEvent } from '../../../lib/productTracking';
 
 interface CreateExpenseModalProps {
   isOpen: boolean;
@@ -76,35 +79,46 @@ export function CreateExpenseModal({
     }
   }, [isOpen, session.user.id, members, groupId]);
 
-  useEffect(() => {
-    const run = async () => {
-      if (!isOpen || !groupId || !session?.user?.id || members.length === 0) {
-        setDebtsToCurrentUser({});
-        return;
-      }
-      const { data, error } = await supabase
-        .from('expenses')
-        .select('id, paid_by_user_id, status, event:events(status), splits:expense_splits(user_id, share_cents)')
-        .eq('group_id', groupId)
-        .is('deleted_at', null);
-      if (error) {
-        setDebtsToCurrentUser({});
-        return;
-      }
-      const eligible = (data || []).filter((row) => isAccountingEligibleExpenseRow(row as any)) as Array<{
-        paid_by_user_id: string;
-        splits?: Array<{ user_id: string; share_cents: number }>;
-      }>;
-      setDebtsToCurrentUser(
-        computeDebtsToCurrentUser({
-          members,
-          currentUserId: session.user.id,
-          eligibleExpenses: eligible,
-        }),
-      );
-    };
-    void run();
+  const loadDebtsToCurrentUser = useCallback(async () => {
+    if (!isOpen || !groupId || !session?.user?.id || members.length === 0) {
+      setDebtsToCurrentUser({});
+      return;
+    }
+    const { data, error } = await supabase
+      .from('expenses')
+      .select('id, paid_by_user_id, status, event:events(status), splits:expense_splits(user_id, share_cents)')
+      .eq('group_id', groupId)
+      .is('deleted_at', null);
+    if (error) {
+      setDebtsToCurrentUser({});
+      return;
+    }
+    const eligible = (data || []).filter((row) => isAccountingEligibleExpenseRow(row as any)) as Array<{
+      paid_by_user_id: string;
+      splits?: Array<{ user_id: string; share_cents: number }>;
+    }>;
+    setDebtsToCurrentUser(
+      computeDebtsToCurrentUser({
+        members,
+        currentUserId: session.user.id,
+        eligibleExpenses: eligible,
+      }),
+    );
   }, [isOpen, groupId, members, session.user.id]);
+
+  useEffect(() => {
+    void loadDebtsToCurrentUser();
+  }, [loadDebtsToCurrentUser]);
+
+  useEffect(() => {
+    const onChanged = (ev: Event) => {
+      const detail = (ev as CustomEvent<{ groupId?: string }>).detail;
+      if (!expensesChangedAffectsGroup(detail, groupId)) return;
+      void loadDebtsToCurrentUser();
+    };
+    window.addEventListener(EXPENSES_CHANGED_EVENT, onChanged);
+    return () => window.removeEventListener(EXPENSES_CHANGED_EVENT, onChanged);
+  }, [groupId, loadDebtsToCurrentUser]);
 
   const toggleParticipant = (userId: string) => {
     setParticipantIds((prev) =>
@@ -226,6 +240,14 @@ export function CreateExpenseModal({
     });
 
     if (result.success) {
+      if (settleAwareEnabled) {
+        // Funnel: settle-aware split actually saved in a group expense flow.
+        void trackProductEvent('smart_settlement_applied', {
+          entity_type: 'group',
+          entity_id: groupId,
+          metadata: { split_method: effectiveSplitMethod, suggestionApplied: settlementSuggestion.applied },
+        });
+      }
       onExpenseCreated?.();
       onClose();
     } else {
@@ -369,7 +391,14 @@ export function CreateExpenseModal({
                   type="checkbox"
                   className="rounded border-slate-300 text-blue-600 focus:ring-blue-500"
                   checked={settleAwareEnabled}
-                  onChange={(e) => setSettleAwareEnabled(e.target.checked)}
+                  onChange={(e) => {
+                    const checked = e.target.checked;
+                    if (checked && !settleAwareEnabled) {
+                      // Funnel: user enabled settlement-aware mode.
+                      void trackProductEvent('smart_settlement_enabled');
+                    }
+                    setSettleAwareEnabled(checked);
+                  }}
                 />
                 {t('groupExpense.useToSettleBalances')}
               </label>
@@ -423,6 +452,12 @@ export function CreateExpenseModal({
             <option value="percentage">{t('groupExpense.splitPercentage')}</option>
           </select>
         </div>
+
+        {!getOnboardingState().hasCreatedExpense && (
+          <p className="text-xs text-slate-500">
+            {t('groupExpense.onboardingFirstExpenseTip')}
+          </p>
+        )}
 
         {splitMethod === 'manual' && (
           <div className="space-y-2">

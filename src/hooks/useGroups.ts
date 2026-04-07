@@ -49,7 +49,11 @@ export function useGroups(session: Session) {
       if (funcError) throw funcError;
 
       await fetchGroups();
-      return { success: true };
+      const groupId =
+        data && typeof data === 'object' && data !== null && 'group' in data
+          ? ((data as { group?: { id?: string } }).group?.id ?? null)
+          : null;
+      return { success: true as const, groupId };
     } catch (err: any) {
       setError(err.message || 'Failed to create group');
       return { success: false, error: err.message };

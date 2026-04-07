@@ -90,6 +90,17 @@ serve(async (req) => {
     if (expenseError || !expense) return jsonResponse({ error: "Expense not found" }, 404);
     if (expense.created_by !== user.id) return jsonResponse({ error: "Not allowed to update this expense" }, 403);
 
+    if (expense.event_id) {
+      const { data: evRow } = await admin
+        .from("events")
+        .select("status")
+        .eq("id", expense.event_id)
+        .maybeSingle();
+      if (evRow?.status === "closed") {
+        return jsonResponse({ error: "Cannot edit expenses in a closed event", code: "EVENT_CLOSED" }, 400);
+      }
+    }
+
     const { data: memberships } = await admin
       .from("group_members")
       .select("user_id")

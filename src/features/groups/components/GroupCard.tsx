@@ -10,12 +10,24 @@ interface GroupCardProps {
   group: Group;
   onClick: (group: Group) => void;
   variant?: 'compact' | 'full';
+  /** Sum of accounting-eligible (open/confirmed) expenses for this group, in cents. */
+  totalOpenExpensesCents?: number;
+  /** While totals are loading, show a placeholder instead of €0. */
+  totalsLoading?: boolean;
 }
 
-export function GroupCard({ group, onClick, variant = 'full' }: GroupCardProps) {
+export function GroupCard({
+  group,
+  onClick,
+  variant = 'full',
+  totalOpenExpensesCents = 0,
+  totalsLoading = false,
+}: GroupCardProps) {
   const { t, i18n } = useTranslation();
   const sampleCompactAmount = formatCurrencyCents(4250, { locale: i18n.language });
-  const zeroAmount = formatCurrencyCents(0, { locale: i18n.language });
+  const listAmount = totalsLoading
+    ? '…'
+    : formatCurrencyCents(totalOpenExpensesCents, { locale: i18n.language });
 
   if (variant === 'compact') {
     return (
@@ -63,7 +75,7 @@ export function GroupCard({ group, onClick, variant = 'full' }: GroupCardProps) 
         </div>
       </div>
       <div className="flex items-center gap-3">
-        <span className="text-sm font-bold text-green-600">{zeroAmount}</span>
+        <span className="text-sm font-bold text-green-600 tabular-nums">{listAmount}</span>
         <ChevronRight className="w-4 h-4 text-slate-300 group-hover:text-blue-500 transition-colors" />
       </div>
     </motion.div>

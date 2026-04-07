@@ -136,6 +136,23 @@ serve(async (req) => {
       return jsonResponse({ error: "One or more participants are not valid group members" }, 400);
     }
 
+    if (event_id) {
+      const { data: evRow, error: evErr } = await admin
+        .from("events")
+        .select("id, status, group_id")
+        .eq("id", event_id)
+        .maybeSingle();
+      if (evErr || !evRow) {
+        return jsonResponse({ error: "Event not found", code: "EVENT_NOT_FOUND" }, 400);
+      }
+      if (evRow.group_id !== group_id) {
+        return jsonResponse({ error: "Event does not belong to this group", code: "EVENT_GROUP_MISMATCH" }, 400);
+      }
+      if (evRow.status === "closed") {
+        return jsonResponse({ error: "Cannot add expenses to a closed event", code: "EVENT_CLOSED" }, 400);
+      }
+    }
+
     let splitRows: Array<{ user_id: string; share_cents: number; percentage: number | null }> = [];
 
     if (split_method === "equal") {

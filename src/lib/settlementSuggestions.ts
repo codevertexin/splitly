@@ -3,6 +3,8 @@
  * Used to record cash transfers in `settlements` that offset group balances.
  */
 
+import { isAccountingEligibleExpenseRow } from './accountingExpenses';
+
 export type SettlementSuggestionRow = {
   key: string;
   group_id: string;
@@ -42,8 +44,7 @@ export function buildSettlementSuggestionsForUser(
 
   for (const expense of expenses) {
     if (groupId && expense.group_id !== groupId) continue;
-    if (expense.status !== 'confirmed') continue;
-    if (expense.event?.status === 'draft') continue;
+    if (!isAccountingEligibleExpenseRow(expense)) continue;
     const splits = expense.splits || [];
     if (expense.paid_by_user_id === sessionUserId) {
       for (const split of splits) {

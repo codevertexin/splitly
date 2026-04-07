@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Session } from '@supabase/supabase-js';
 import { supabase } from '../lib/supabase';
+import { EXPENSES_CHANGED_EVENT, expensesChangedAffectsGroup } from '../lib/expenseEvents';
 import { isAccountingEligibleExpenseRow } from '../lib/accountingExpenses';
 
 /** Net balance for the current user in the group, in cents (EUR). Positive = you're owed, negative = you owe. */
@@ -80,6 +81,16 @@ export function useGroupBalances(session: Session | null, groupId: string | unde
   useEffect(() => {
     void fetchMyBalance();
   }, [fetchMyBalance]);
+
+  useEffect(() => {
+    const onChanged = (ev: Event) => {
+      const detail = (ev as CustomEvent<{ groupId?: string }>).detail;
+      if (!expensesChangedAffectsGroup(detail, groupId)) return;
+      void fetchMyBalance();
+    };
+    window.addEventListener(EXPENSES_CHANGED_EVENT, onChanged);
+    return () => window.removeEventListener(EXPENSES_CHANGED_EVENT, onChanged);
+  }, [fetchMyBalance, groupId]);
 
   return { myBalanceCents, loading, error, refetch: fetchMyBalance };
 }

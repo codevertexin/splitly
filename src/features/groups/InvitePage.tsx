@@ -5,6 +5,67 @@ import { supabase } from '../../lib/supabase';
 import { Loader2, CheckCircle2, AlertCircle, ArrowRight } from 'lucide-react';
 import { motion } from 'motion/react';
 import { Button } from '../../components/ui/Button';
+import { trackProductEvent } from '../../lib/productTracking';
+
+type AcceptInviteResponse = {
+  success?: boolean;
+  error?: string;
+  code?: string;
+  group_id?: string;
+  status?: string;
+};
+
+/**
+ * `functions.invoke` sets `data` to null on non-2xx; the JSON body is still available
+ * on `FunctionsHttpError.context` (Response), unread.
+ */
+async function resolveAcceptInvitePayload(
+  data: unknown,
+  fnError: unknown,
+): Promise<AcceptInviteResponse | null> {
+  if (data && typeof data === 'object') {
+    return data as AcceptInviteResponse;
+  }
+  if (fnError && typeof fnError === 'object' && 'context' in fnError) {
+    const res = (fnError as { context?: Response }).context;
+    if (res && typeof res.json === 'function') {
+      try {
+        return (await res.json()) as AcceptInviteResponse;
+      } catch {
+        return null;
+      }
+    }
+  }
+  return null;
+}
+
+function mapInviteError(
+  t: (k: string, o?: Record<string, string>) => string,
+  code: string | undefined,
+  fallback: string,
+): string {
+  switch (code) {
+    case 'invite_expired':
+      return t('invite.errorExpired');
+    case 'invite_used':
+      return t('invite.errorUsed');
+    case 'invalid_invite':
+      return t('invite.errorInvalid');
+    case 'missing_token':
+      return t('invite.missingToken');
+    case 'invalid_body':
+      return t('invite.joinFailed');
+    case 'unauthorized':
+    case 'missing_auth':
+      return t('invite.errorAuth');
+    case 'lookup_failed':
+    case 'join_failed':
+    case 'server_error':
+      return t('invite.errorServer');
+    default:
+      return fallback || t('invite.joinFailed');
+  }
+}
 
 export function InvitePage() {
   const { t } = useTranslation();
@@ -13,6 +74,7 @@ export function InvitePage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [joinedGroupId, setJoinedGroupId] = useState<string | null>(null);
+  const [alreadyMember, setAlreadyMember] = useState(false);
 
   useEffect(() => {
     const acceptInvite = async () => {
@@ -23,27 +85,54 @@ export function InvitePage() {
       }
 
       try {
-        const { data, error } = await supabase.functions.invoke('accept-invite', {
+        const { data, error: fnError } = await supabase.functions.invoke('accept-invite', {
           body: { token },
         });
 
-        if (error) throw error;
-        if (!data?.group_id) throw new Error(t('invite.groupIdMissing'));
+        const payload = await resolveAcceptInvitePayload(data, fnError);
 
-        setJoinedGroupId(data.group_id);
+        if (fnError) {
+          const msg =
+            payload?.error ||
+            (fnError instanceof Error ? fnError.message : String(fnError));
+          setError(mapInviteError(t, payload?.code, msg));
+          setLoading(false);
+          return;
+        }
+
+        if (payload?.error && !payload.success) {
+          setError(mapInviteError(t, payload.code, payload.error));
+          setLoading(false);
+          return;
+        }
+
+        if (!payload?.success || !payload.group_id) {
+          setError(t('invite.groupIdMissing'));
+          setLoading(false);
+          return;
+        }
+
+        setJoinedGroupId(payload.group_id);
+        setAlreadyMember(payload.status === 'already_member');
+        // Funnel: invite acceptance converted into group join or confirmed membership.
+        void trackProductEvent('invite_accepted', {
+          entity_type: 'group',
+          entity_id: payload.group_id,
+          metadata: { status: payload.status ?? 'joined' },
+        });
 
         setTimeout(() => {
-          navigate(`/groups/${data.group_id}`);
+          navigate(`/groups/${payload.group_id}`);
         }, 2000);
-      } catch (err: any) {
+      } catch (err: unknown) {
         console.error('Error accepting invite:', err);
-        setError(err.message || t('invite.joinFailed'));
+        setError(err instanceof Error ? err.message : t('invite.joinFailed'));
       } finally {
         setLoading(false);
       }
     };
 
-    acceptInvite();
+    void acceptInvite();
   }, [token, navigate, t]);
 
   if (loading) {
@@ -80,8 +169,12 @@ export function InvitePage() {
       <div className="w-16 h-16 bg-green-50 rounded-2xl flex items-center justify-center mx-auto mb-6">
         <CheckCircle2 className="w-8 h-8 text-green-600" />
       </div>
-      <h2 className="text-2xl font-bold text-slate-900 mb-2">{t('invite.successTitle')}</h2>
-      <p className="text-slate-500 mb-8">{t('invite.successBody')}</p>
+      <h2 className="text-2xl font-bold text-slate-900 mb-2">
+        {alreadyMember ? t('invite.successAlreadyMemberTitle') : t('invite.successTitle')}
+      </h2>
+      <p className="text-slate-500 mb-8">
+        {alreadyMember ? t('invite.successAlreadyMemberBody') : t('invite.successBody')}
+      </p>
 
       <div className="space-y-3">
         <Button
@@ -90,11 +183,7 @@ export function InvitePage() {
         >
           {t('invite.viewGroup')} <ArrowRight className="w-4 h-4 ml-2" />
         </Button>
-        <Button
-          variant="outline"
-          onClick={() => navigate('/dashboard')}
-          className="w-full"
-        >
+        <Button variant="outline" onClick={() => navigate('/dashboard')} className="w-full">
           {t('invite.goToDashboard')}
         </Button>
       </div>

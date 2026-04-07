@@ -62,7 +62,7 @@ schema_paths = []
 enabled = true
 # Specifies an ordered list of seed files to load during db reset.
 # Supports glob patterns relative to supabase directory: "./seeds/*.sql"
-sql_paths = ["./seed.sql"]
+sql_paths = ["./seed.sql", "./seeds/e2e_demo.sql"]
 
 [db.network_restrictions]
 # Enable management of network restrictions.
@@ -417,16 +417,16 @@ entrypoint = "./functions/create-expense/index.ts"
 # For example, if you want to serve static HTML pages in your function:
 # static_files = [ "./functions/create-expense/*.html" ]
 
-[functions.accep-invite]
+[functions.accept-invite]
 enabled = true
 verify_jwt = true
-import_map = "./functions/accep-invite/deno.json"
+import_map = "./functions/accept-invite/deno.json"
 # Uncomment to specify a custom file path to the entrypoint.
 # Supported file extensions are: .ts, .js, .mjs, .jsx, .tsx
-entrypoint = "./functions/accep-invite/index.ts"
+entrypoint = "./functions/accept-invite/index.ts"
 # Specifies static files to be bundled with the function. Supports glob patterns.
 # For example, if you want to serve static HTML pages in your function:
-# static_files = [ "./functions/accep-invite/*.html" ]
+# static_files = [ "./functions/accept-invite/*.html" ]
 
 [functions.create-event]
 enabled = true
@@ -460,3 +460,14 @@ entrypoint = "./functions/create-payment-request/index.ts"
 # Specifies static files to be bundled with the function. Supports glob patterns.
 # For example, if you want to serve static HTML pages in your function:
 # static_files = [ "./functions/create-payment-request/*.html" ]
+
+[functions.create-expense-v2]
+enabled = true
+verify_jwt = true
+import_map = "./functions/create-expense-v2/deno.json"
+# Uncomment to specify a custom file path to the entrypoint.
+# Supported file extensions are: .ts, .js, .mjs, .jsx, .tsx
+entrypoint = "./functions/create-expense-v2/index.ts"
+# Specifies static files to be bundled with the function. Supports glob patterns.
+# For example, if you want to serve static HTML pages in your function:
+# static_files = [ "./functions/create-expense-v2/*.html" ]

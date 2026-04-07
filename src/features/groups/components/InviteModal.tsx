@@ -1,8 +1,9 @@
 import React, { useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { X, Copy, Share2, Check, Loader2, Link as LinkIcon } from 'lucide-react';
+import { X, Copy, Check, Loader2, Link as LinkIcon, MessageCircle, Mail } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Button } from '../../../components/ui/Button';
+import { trackProductEvent } from '../../../lib/productTracking';
 
 interface InviteModalProps {
   isOpen: boolean;
@@ -21,27 +22,33 @@ export function InviteModal({ isOpen, onClose, inviteLink, loading, error }: Inv
     try {
       await navigator.clipboard.writeText(inviteLink);
       setCopied(true);
+      // Funnel: user copied invite link to share group.
+      void trackProductEvent('invite_link_copied');
       setTimeout(() => setCopied(false), 2000);
     } catch (err) {
       console.error('Failed to copy text: ', err);
     }
   };
 
-  const handleShare = async () => {
+  const whatsappShareUrl = inviteLink
+    ? `https://wa.me/?text=${encodeURIComponent(`${t('inviteModal.shareText')} ${inviteLink}`)}`
+    : '#';
+  const mailtoUrl = inviteLink
+    ? `mailto:?subject=${encodeURIComponent(t('inviteModal.shareTitle'))}&body=${encodeURIComponent(
+        `${t('inviteModal.shareText')}\n\n${inviteLink}`,
+      )}`
+    : '#';
+  const handleShareWhatsApp = () => {
     if (!inviteLink) return;
-    if (navigator.share) {
-      try {
-        await navigator.share({
-          title: t('inviteModal.shareTitle'),
-          text: t('inviteModal.shareText'),
-          url: inviteLink,
-        });
-      } catch (err) {
-        console.error('Error sharing:', err);
-      }
-    } else {
-      handleCopy();
-    }
+    // Funnel: user chose an explicit share action from invite modal.
+    void trackProductEvent('invite_share_clicked', { metadata: { channel: 'whatsapp' } });
+    window.open(whatsappShareUrl, '_blank', 'noopener,noreferrer');
+  };
+  const handleSendEmail = () => {
+    if (!inviteLink) return;
+    // Funnel: user chose an explicit share action from invite modal.
+    void trackProductEvent('invite_share_clicked', { metadata: { channel: 'email' } });
+    window.location.href = mailtoUrl;
   };
 
   return (
@@ -90,6 +97,7 @@ export function InviteModal({ isOpen, onClose, inviteLink, loading, error }: Inv
                       <LinkIcon className="w-8 h-8 text-blue-600" />
                     </div>
                     <p className="text-slate-500 text-sm">{t('inviteModal.shareHint')}</p>
+                    <p className="mt-2 text-sm font-medium text-emerald-700">{t('inviteModal.readySuccess')}</p>
                   </div>
 
                   <div className="flex items-center gap-2 p-2 bg-slate-50 border border-slate-100 rounded-2xl">
@@ -109,14 +117,22 @@ export function InviteModal({ isOpen, onClose, inviteLink, loading, error }: Inv
                     </Button>
                   </div>
 
-                  <div className="grid grid-cols-2 gap-4">
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                     <Button onClick={handleCopy} variant="outline" className="w-full">
                       <Copy className="w-4 h-4 mr-2" />
                       {copied ? t('inviteModal.copied') : t('inviteModal.copyLink')}
                     </Button>
-                    <Button onClick={handleShare} className="w-full">
-                      <Share2 className="w-4 h-4 mr-2" />
-                      {t('inviteModal.share')}
+                    <Button
+                      onClick={handleShareWhatsApp}
+                      className="w-full bg-[#25D366] hover:bg-[#1ebe5d] text-white"
+                      disabled={!inviteLink}
+                    >
+                      <MessageCircle className="w-4 h-4 mr-2" />
+                      {t('inviteModal.shareWhatsApp')}
+                    </Button>
+                    <Button onClick={handleSendEmail} variant="secondary" className="w-full" disabled={!inviteLink}>
+                      <Mail className="w-4 h-4 mr-2" />
+                      {t('inviteModal.sendEmail')}
                     </Button>
                   </div>
                 </div>

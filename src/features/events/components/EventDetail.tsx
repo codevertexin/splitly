@@ -27,12 +27,14 @@ import { supabase } from '../../../lib/supabase';
 import { formatEventDateLabel } from '../datePresentation';
 import { formatCurrencyCents, formatDateOnly, formatFixedInput } from '../../../lib/dateTime';
 import { iconForExpenseTitle } from '../../expenses/expenseSuggestions';
+import { filterAccountingEligibleExpenses } from '../../../lib/accountingExpenses';
+import { notifyExpensesChanged } from '../../../lib/expenseEvents';
 
 interface EventDetailProps {
   event: EventDetailData;
   onBack: () => void;
   onAddParticipant: (userId: string) => Promise<void>;
-  onRefresh: () => Promise<void>;
+  onRefresh: () => Promise<{ success: boolean; error?: string }>;
   onUpdateEvent: (input: {
     title: string;
     description: string | null;
@@ -200,12 +202,25 @@ export function EventDetail({ event, onBack, onAddParticipant, onRefresh, onUpda
     setEditError(null);
   }, [event]);
 
-  const draftExpenses = event.expenses
-    .filter((expense) => expense.status === 'draft')
-    .sort((a, b) => new Date(b.incurred_at).getTime() - new Date(a.incurred_at).getTime());
-  const confirmedExpenses = event.expenses
-    .filter((expense) => expense.status === 'confirmed')
-    .sort((a, b) => new Date(b.incurred_at).getTime() - new Date(a.incurred_at).getTime());
+  const draftExpenses = useMemo(
+    () =>
+      event.expenses
+        .filter((expense) => expense.status === 'draft')
+        .sort((a, b) => new Date(b.incurred_at).getTime() - new Date(a.incurred_at).getTime()),
+    [event.expenses],
+  );
+  const confirmedExpenses = useMemo(
+    () =>
+      event.expenses
+        .filter((expense) => expense.status === 'confirmed')
+        .sort((a, b) => new Date(b.incurred_at).getTime() - new Date(a.incurred_at).getTime()),
+    [event.expenses],
+  );
+  /** V1 accounting: same rule as dashboard / group balances — draft event ⇒ no totals; else only eligible confirmed rows. */
+  const accountingConfirmedExpenses = useMemo(() => {
+    if (event.status === 'draft') return [];
+    return filterAccountingEligibleExpenses(confirmedExpenses);
+  }, [event.status, confirmedExpenses]);
   const hasAnyExpenses = event.expenses.length > 0;
 
   const timingPhase = useMemo(
@@ -214,18 +229,18 @@ export function EventDetail({ event, onBack, onAddParticipant, onRefresh, onUpda
   );
 
   const yourNetInEventCents = useMemo(
-    () => computeUserEventNetCents(confirmedExpenses, session.user.id),
-    [confirmedExpenses, session.user.id],
+    () => computeUserEventNetCents(accountingConfirmedExpenses, session.user.id),
+    [accountingConfirmedExpenses, session.user.id],
   );
 
   const userInvolvedInConfirmed = useMemo(
-    () => userInvolvedInConfirmedExpenses(confirmedExpenses, session.user.id),
-    [confirmedExpenses, session.user.id],
+    () => userInvolvedInConfirmedExpenses(accountingConfirmedExpenses, session.user.id),
+    [accountingConfirmedExpenses, session.user.id],
   );
 
   const totalConfirmedCents = useMemo(
-    () => confirmedExpenses.reduce((s, e) => s + e.amount_cents, 0),
-    [confirmedExpenses],
+    () => accountingConfirmedExpenses.reduce((s, e) => s + e.amount_cents, 0),
+    [accountingConfirmedExpenses],
   );
 
   const totalDraftCents = useMemo(() => draftExpenses.reduce((s, e) => s + e.amount_cents, 0), [draftExpenses]);
@@ -388,7 +403,11 @@ export function EventDetail({ event, onBack, onAddParticipant, onRefresh, onUpda
       return;
     }
     setConfirmingExpense(null);
-    await onRefresh();
+    notifyExpensesChanged({ groupId: event.group_id });
+    const refresh = await onRefresh();
+    if (!refresh.success) {
+      setEditError(refresh.error || t('eventDetail.dataRefreshFailed'));
+    }
   };
 
   const handleRemoveParticipantChoice = async (recalculateDraftExpenses: boolean) => {
@@ -875,7 +894,7 @@ export function EventDetail({ event, onBack, onAddParticipant, onRefresh, onUpda
     </motion.div>
 
       <Modal
-        isOpen={showAddExpense}
+        isOpen={showAddExpense && event.status !== 'closed'}
         onClose={() => setShowAddExpense(false)}
         title={t('groupExpense.modalTitle')}
         size="lg"
@@ -888,7 +907,10 @@ export function EventDetail({ event, onBack, onAddParticipant, onRefresh, onUpda
           session={session}
           onSuccess={async () => {
             setShowAddExpense(false);
-            await onRefresh();
+            const r = await onRefresh();
+            if (!r.success) {
+              setEditError(r.error || t('eventDetail.dataRefreshFailed'));
+            }
           }}
           onCancel={() => setShowAddExpense(false)}
         />

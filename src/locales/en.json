@@ -32,7 +32,10 @@
     "signIn": "Sign In",
     "toggleToSignIn": "Already have an account? Sign In",
     "toggleToSignUp": "Don't have an account? Sign Up",
-    "confirmEmail": "Check your email for the confirmation link!"
+    "confirmEmail": "Check your email for the confirmation link!",
+    "displayName": "Your name",
+    "displayNamePlaceholder": "How friends see you",
+    "displayNameTooShort": "Please enter a name with at least 2 characters."
   },
   "layout": {
     "nav": {
@@ -88,12 +91,16 @@
     "descriptionPlaceholder": "What was this for?",
     "detectedSuggestion": "Detected suggestion",
     "invalidAmount": "Please enter a valid amount",
+    "cannotAddToClosedEvent": "You cannot add expenses to a closed event.",
+    "eventNotFound": "Event not found or no longer available.",
+    "eventGroupMismatch": "That event does not belong to the selected group.",
     "createFailed": "Failed to add expense",
     "updateFailed": "Failed to update expense",
     "submit": "Add expense",
     "saveChanges": "Save changes",
     "editTitle": "Edit expense",
-    "editAction": "Edit expense"
+    "editAction": "Edit expense",
+    "onboardingFirstExpenseTip": "Tip: split this expense with others - we'll track everything automatically."
   },
   "settings": {
     "title": "Settings",
@@ -138,6 +145,10 @@
   },
   "dashboard": {
     "welcome": "Welcome, {{name}}!",
+    "someone": "someone",
+    "onboardingWelcomeTitle": "Welcome!",
+    "onboardingWelcomeDescription": "Split expenses with friends, trips and events.",
+    "onboardingWelcomeCta": "Create your first group",
     "subtitle": "Manage group expenses and split bills easily.",
     "inviteTitle": "Invite friends and split expenses effortlessly!",
     "inviteTitleShort": "Invite friends",
@@ -241,6 +252,7 @@
     "you": "You",
     "createdAt": "Created At",
     "refreshParticipantsFailed": "Failed to refresh event participants",
+    "dataRefreshFailed": "Could not reload the latest data. Your change may have been saved — try again or refresh the page.",
     "addParticipantFailed": "Failed to add participant",
     "errorLoadingEvent": "Error loading event",
     "eventNotFound": "Event not found",
@@ -463,7 +475,10 @@
     "statusActive": "Active",
     "statusArchived": "Archived",
     "statusAll": "All",
-    "empty": "No groups found. Create one above to get started!"
+    "empty": "No groups found. Create one above to get started!",
+    "emptyOnboardingTitle": "Create your first group",
+    "emptyOnboardingDescription": "Start tracking shared expenses with friends",
+    "emptyOnboardingCta": "Create group"
   },
   "createGroup": {
     "nameLabel": "Group Name",
@@ -472,7 +487,8 @@
     "descriptionPlaceholder": "Shared expenses for...",
     "cancel": "Cancel",
     "submit": "Create Group",
-    "createFailed": "Failed to create group"
+    "createFailed": "Failed to create group",
+    "createSuccess": "Group created successfully."
   },
   "groupCard": {
     "youOwe": "You owe {{amount}}",
@@ -492,6 +508,24 @@
     "settleRecordedError": "Could not save settlements.",
     "settleNothingToRecord": "There is nothing to record right now. Try again after expenses sync, or use Settle up on the dashboard.",
     "dismissNotice": "Dismiss",
+    "onboardingNextExpenseBanner": "Group created - next step: add your first expense",
+    "firstExpenseSuccessBanner": "Expense saved — your balances and “who owes who” update below.",
+    "soloMemberInviteNudge": "You’re the only one here so far. Invite someone to split costs and settle up together.",
+    "tabOverview": "Overview",
+    "tabExpenses": "Expenses",
+    "tabMembers": "Members",
+    "membersSectionTitle": "People in this group",
+    "membersSectionSubtitle": "{{count}} people in this group",
+    "membersInviteCta": "Invite more people",
+    "membersSearchPlaceholder": "Search by name…",
+    "membersNoMatch": "No one matches your search.",
+    "memberRoleOwner": "Owner",
+    "memberRoleMember": "Member",
+    "memberYou": "You",
+    "memberBalanceEven": "All settled with you",
+    "memberYouOweThem": "You owe {{amount}}",
+    "memberTheyOweYou": "Owes you {{amount}}",
+    "onboardingSettlementHint": "You can request payments to settle balances",
     "totalExpenses": "Total Expenses",
     "yourBalance": "Your Balance",
     "netPositionLabel": "Net position in this group",
@@ -539,6 +573,7 @@
     "whoOwesWhoEmptyEven": "All settled — nice work",
     "sectionTotalLabel": "Total",
     "noExpenses": "No expenses yet",
+    "noExpensesDescription": "Add your first expense to start tracking balances",
     "noDraftExpenses": "No draft expenses in this group.",
     "addFirstExpense": "Add expense",
     "addExpense": "Add expense",
@@ -582,6 +617,23 @@
     "settleHelpBody": "We calculate who owes whom based on shared expenses. To settle up, you can record payments so everyone’s balance returns to zero.",
     "settleHelpLearnMore": "Learn more"
   },
+  "groupOnboarding": {
+    "title": "Let’s get started",
+    "subtitle": "Add your first expense to see who owes whom — or invite people so you can split together.",
+    "draftsHint": "You have draft expenses: confirm them when ready so they count toward balances.",
+    "ctaFirstExpense": "Add first expense",
+    "ctaInvite": "Invite members",
+    "ctaEvent": "Create event"
+  },
+  "profileNameGate": {
+    "title": "How should we call you?",
+    "body": "Choose a name your friends will recognize in groups and expenses.",
+    "nameLabel": "Display name",
+    "namePlaceholder": "e.g. Alex or Alex Silva",
+    "continue": "Continue",
+    "nameTooShort": "Please enter at least 2 characters.",
+    "saveFailed": "Could not save. Try again."
+  },
   "manageGroup": {
     "title": "Manage group",
     "saveChanges": "Save changes",
@@ -623,6 +675,7 @@
     "adjustedToSettleBalances": "Adjusted split preview",
     "adjustedPreviewLine": "{{name}} pays {{adjusted}} instead of {{base}}",
     "settleSuggestionNote": "You can switch to manual split to edit amounts. This feature only changes this expense’s split, not settlement records.",
+    "onboardingFirstExpenseTip": "Tip: split this expense with others - we'll track everything automatically.",
     "splitEqual": "Equal split",
     "splitManual": "Per participant",
     "splitPercentage": "By percentage",
@@ -661,14 +714,21 @@
   },
   "invite": {
     "missingToken": "Missing invite token.",
-    "groupIdMissing": "Group ID not returned by accept-invite.",
+    "groupIdMissing": "We couldn't complete this invite. Please try again or ask for a new link.",
     "joinFailed": "Failed to join group. The invite might be invalid or expired.",
     "joiningTitle": "Joining group...",
     "joiningBody": "Please wait while we process your invitation.",
     "errorTitle": "Invitation Error",
+    "errorExpired": "This invite has expired. Ask a member to send a new link.",
+    "errorUsed": "This invite link is no longer valid.",
+    "errorInvalid": "This invite link is invalid.",
+    "errorAuth": "You must be signed in to accept an invite.",
+    "errorServer": "Something went wrong on our side. Please try again in a moment.",
     "goToDashboard": "Go to Dashboard",
     "successTitle": "You've joined the group!",
     "successBody": "Your access was added successfully.",
+    "successAlreadyMemberTitle": "You're already in this group",
+    "successAlreadyMemberBody": "Your membership is active. You can open the group anytime.",
     "viewGroup": "View Group"
   },
   "inviteModal": {
@@ -676,9 +736,11 @@
     "generating": "Generating invite link...",
     "close": "Close",
     "shareHint": "Share this link with your friends to invite them to this group.",
+    "readySuccess": "Invite link ready — share it with your friends",
     "copied": "Copied!",
     "copyLink": "Copy Link",
-    "share": "Share",
+    "shareWhatsApp": "Share via WhatsApp",
+    "sendEmail": "Send email",
     "shareTitle": "Join my group on Splitly",
     "shareText": "Join my group on Splitly to easily split expenses!"
   },

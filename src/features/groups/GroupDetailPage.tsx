@@ -1,12 +1,12 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { Session } from '@supabase/supabase-js';
 import { Loader2, AlertCircle } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { useGroups } from '../../hooks/useGroups';
 import { GroupExpenseRow, useGroupExpenses } from '../../hooks/useGroupExpenses';
-import { useGroupMembers } from '../../hooks/useGroupMembers';
+import { useGroupMembers, memberLabel } from '../../hooks/useGroupMembers';
 import { useGroupBalances } from '../../hooks/useGroupBalances';
 import { useGroupAllBalancesZero } from '../../hooks/useGroupAllBalancesZero';
 import { useEvents } from '../../hooks/useEvents';
@@ -27,6 +27,9 @@ import {
   suggestSettlementAwareEqualSplit,
 } from '../../lib/settlementSplit';
 import { buildSettlementSuggestionsForUser } from '../../lib/settlementSuggestions';
+import { notifyExpensesChanged } from '../../lib/expenseEvents';
+import { getOnboardingState, updateOnboardingState } from '../../lib/onboardingState';
+import { trackProductEvent } from '../../lib/productTracking';
 
 interface GroupDetailPageProps {
   session: Session;
@@ -36,6 +39,7 @@ export function GroupDetailPage({ session }: GroupDetailPageProps) {
   const { t } = useTranslation();
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const location = useLocation();
   const { groups, loading, error, actionLoading, updateGroup, archiveGroup, fetchGroups } =
     useGroups(session);
   const [group, setGroup] = useState<Group | null>(null);
@@ -97,6 +101,10 @@ export function GroupDetailPage({ session }: GroupDetailPageProps) {
   const [requestingUserIds, setRequestingUserIds] = useState<Set<string>>(new Set());
   const [requestedUserIds, setRequestedUserIds] = useState<Set<string>>(new Set());
   const [requestFeedback, setRequestFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+  const [showOnboardingNextExpenseBanner, setShowOnboardingNextExpenseBanner] = useState(
+    Boolean((location.state as { onboardingNextExpense?: boolean } | null)?.onboardingNextExpense),
+  );
+  const [firstExpenseSuccessBanner, setFirstExpenseSuccessBanner] = useState(false);
   const [editingExpense, setEditingExpense] = useState<GroupExpenseRow | null>(null);
   const [editTitle, setEditTitle] = useState('');
   const [editAmount, setEditAmount] = useState('');
@@ -109,6 +117,8 @@ export function GroupDetailPage({ session }: GroupDetailPageProps) {
   const [editPercentageShares, setEditPercentageShares] = useState<Record<string, string>>({});
   const [editError, setEditError] = useState<string | null>(null);
   const [editStatus, setEditStatus] = useState<'draft' | 'confirmed'>('confirmed');
+  const onboardingState = getOnboardingState();
+  const showSettlementHint = onboardingState.hasCreatedExpense && myBalanceCents > 0 && !onboardingState.hasSeenSettlementHint;
   const editAmountCentsPreview = Math.round((parseFloat(editAmount.replace(',', '.')) || 0) * 100);
   const editEqualSharesPreview = useMemo(
     () => buildEqualSharesCents(editParticipantIds, editAmountCentsPreview),
@@ -176,7 +186,7 @@ export function GroupDetailPage({ session }: GroupDetailPageProps) {
     if (!group) return [];
     const profileNamesById: Record<string, string> = {};
     for (const m of members) {
-      if (m.full_name?.trim()) profileNamesById[m.user_id] = m.full_name.trim();
+      profileNamesById[m.user_id] = memberLabel(m);
     }
     return buildSettlementSuggestionsForUser(allExpenses, session.user.id, {
       groupId: group.id,
@@ -230,6 +240,7 @@ export function GroupDetailPage({ session }: GroupDetailPageProps) {
       if (error) throw error;
       setSettleFeedback({ type: 'success', message: t('groupDetail.settleRecordedSuccess') });
       await Promise.all([refetchBalances(), refetchExpenses(), refetchBalancesZero()]);
+      notifyExpensesChanged({ groupId: group.id });
       if (import.meta.env.DEV) {
         console.log('[group-settle] refetch done');
       }
@@ -285,6 +296,12 @@ export function GroupDetailPage({ session }: GroupDetailPageProps) {
           type: 'success',
           message: t('groupDetail.paymentRequestSentTo', { name: targetName }),
         });
+        // Funnel: user sent a payment request to settle balances.
+        void trackProductEvent('payment_request_sent', {
+          entity_type: 'group',
+          entity_id: group.id,
+          metadata: { targetUserId, amountCents },
+        });
       } catch (err: unknown) {
         if (import.meta.env.DEV) console.error('create-payment-request failed:', err);
         setRequestFeedback({
@@ -320,6 +337,8 @@ export function GroupDetailPage({ session }: GroupDetailPageProps) {
 
   const handleInvite = async () => {
     if (!group) return;
+    // Funnel: user opened invite sharing flow.
+    void trackProductEvent('invite_modal_opened', { entity_type: 'group', entity_id: group.id });
 
     setIsInviteModalOpen(true);
     setInviteLoading(true);
@@ -378,6 +397,20 @@ export function GroupDetailPage({ session }: GroupDetailPageProps) {
     setEditSettleAwareEnabled(false);
     setEditError(null);
   };
+
+  useEffect(() => {
+    if (myBalanceCents !== 0) {
+      // Funnel: first time user sees meaningful balance in a group.
+      void trackProductEvent('first_balance_seen', { once_key: 'first_balance_seen' });
+    }
+  }, [myBalanceCents]);
+
+  useEffect(() => {
+    if (!showSettlementHint) return;
+    // Funnel: user saw settlement education hint after getting positive balance.
+    void trackProductEvent('first_settlement_hint_seen', { once_key: 'first_settlement_hint_seen' });
+    updateOnboardingState({ hasSeenSettlementHint: true });
+  }, [showSettlementHint]);
 
   useEffect(() => {
     if (!group?.id || members.length === 0) {
@@ -561,8 +594,18 @@ export function GroupDetailPage({ session }: GroupDetailPageProps) {
         onManageGroup={() => setIsManageModalOpen(true)}
         onOpenAddExpense={() => {
           if (membersLoading || membersError || members.length === 0) return;
+          if (!getOnboardingState().hasCreatedExpense) {
+            // Funnel: first intent signal that user started adding an expense.
+            void trackProductEvent('first_expense_started', { once_key: 'first_expense_started' });
+          }
           setIsExpenseModalOpen(true);
         }}
+        showOnboardingNextExpenseBanner={showOnboardingNextExpenseBanner}
+        onDismissOnboardingNextExpenseBanner={() => setShowOnboardingNextExpenseBanner(false)}
+        highlightAddExpenseCta={showOnboardingNextExpenseBanner && !onboardingState.hasCreatedExpense}
+        showSettlementHint={showSettlementHint}
+        showFirstExpenseSuccessBanner={firstExpenseSuccessBanner}
+        onDismissFirstExpenseSuccessBanner={() => setFirstExpenseSuccessBanner(false)}
         canEditExpense={canEditExpense}
         onEditExpense={openEditExpense}
         onRequestPayment={handleRequestPayment}
@@ -657,7 +700,7 @@ export function GroupDetailPage({ session }: GroupDetailPageProps) {
                       )
                     }
                   />
-                  <span className="font-medium text-slate-800 truncate">{m.full_name || m.user_id}</span>
+                  <span className="font-medium text-slate-800 truncate">{memberLabel(m)}</span>
                 </label>
               ))}
             </div>
@@ -682,7 +725,7 @@ export function GroupDetailPage({ session }: GroupDetailPageProps) {
                     <div className="mt-1 space-y-1">
                       {editParticipantIds.map((id) => {
                         const member = members.find((m) => m.user_id === id);
-                        const name = member?.full_name || id;
+                        const name = member ? memberLabel(member) : id;
                         const base = editSettlementSuggestion.baseShares[id] || 0;
                         const adjusted = editSettlementSuggestion.adjustedShares[id] || 0;
                         const delta = adjusted - base;
@@ -731,7 +774,7 @@ export function GroupDetailPage({ session }: GroupDetailPageProps) {
                   .filter((m) => editParticipantIds.includes(m.user_id))
                   .map((m) => (
                     <div key={m.user_id} className="flex items-center gap-3 p-2.5 rounded-xl border border-slate-100 bg-slate-50">
-                      <span className="text-sm text-slate-800 flex-1 truncate">{m.full_name || m.user_id}</span>
+                      <span className="text-sm text-slate-800 flex-1 truncate">{memberLabel(m)}</span>
                       <input
                         type="text"
                         inputMode="decimal"
@@ -795,7 +838,7 @@ export function GroupDetailPage({ session }: GroupDetailPageProps) {
                   .filter((m) => editParticipantIds.includes(m.user_id))
                   .map((m) => (
                     <div key={m.user_id} className="flex items-center gap-3 p-2.5 rounded-xl border border-slate-100 bg-slate-50">
-                      <span className="text-sm text-slate-800 flex-1 truncate">{m.full_name || m.user_id}</span>
+                      <span className="text-sm text-slate-800 flex-1 truncate">{memberLabel(m)}</span>
                       <input
                         type="text"
                         inputMode="decimal"
@@ -851,6 +894,13 @@ export function GroupDetailPage({ session }: GroupDetailPageProps) {
         actionLoading={expenseActionLoading}
         createExpense={createExpense}
         onExpenseCreated={() => {
+          const hadCreatedBefore = getOnboardingState().hasCreatedExpense;
+          if (!hadCreatedBefore) {
+            // Funnel: first expense completion in group context.
+            void trackProductEvent('first_expense_created', { once_key: 'first_expense_created' });
+            updateOnboardingState({ hasCreatedExpense: true });
+            setFirstExpenseSuccessBanner(true);
+          }
           void refetchBalances();
           void refetchBalancesZero();
         }}

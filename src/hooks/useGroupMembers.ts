@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { Session } from '@supabase/supabase-js';
 import { supabase } from '../lib/supabase';
 import type { Database } from '../types';
+import { socialDisplayName } from '../lib/displayName';
 
 export type GroupMemberRole = Database['public']['Enums']['group_role'];
 
@@ -9,13 +10,13 @@ export type GroupMemberRow = {
   user_id: string;
   role: GroupMemberRole;
   full_name: string | null;
+  username: string | null;
   avatar_url: string | null;
 };
 
-/** Label for UI: nome completo ou, em falta, o user id. */
-export function memberLabel(m: Pick<GroupMemberRow, 'full_name' | 'user_id'>): string {
-  const n = m.full_name?.trim();
-  return n || m.user_id;
+/** Label para UI: nome legível; nunca mostrar UUID cru. */
+export function memberLabel(m: Pick<GroupMemberRow, 'full_name' | 'username' | 'user_id'>): string {
+  return socialDisplayName({ full_name: m.full_name, username: m.username }, m.user_id);
 }
 
 export function useGroupMembers(session: Session | null, groupId: string | undefined) {
@@ -44,7 +45,7 @@ export function useGroupMembers(session: Session | null, groupId: string | undef
 
       const { data, error: qError } = await supabase
         .from('group_members')
-        .select('user_id, role, profiles(full_name, avatar_url)')
+        .select('user_id, role, profiles(full_name, avatar_url, username)')
         .eq('group_id', groupId)
         .eq('status', 'active');
 
@@ -56,13 +57,12 @@ export function useGroupMembers(session: Session | null, groupId: string | undef
           user_id: row.user_id,
           role: row.role as GroupMemberRole,
           full_name: profile?.full_name?.trim() || null,
+          username: profile?.username?.trim() || null,
           avatar_url: profile?.avatar_url || null,
         };
       });
 
-      rows.sort((a, b) =>
-        (a.full_name || a.user_id).localeCompare(b.full_name || b.user_id)
-      );
+      rows.sort((a, b) => memberLabel(a).localeCompare(memberLabel(b)));
 
       setMembers(rows);
     } catch (err: any) {

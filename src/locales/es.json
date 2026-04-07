@@ -32,7 +32,10 @@
     "signIn": "Iniciar sesión",
     "toggleToSignIn": "¿Ya tienes cuenta? Inicia sesión",
     "toggleToSignUp": "¿No tienes cuenta? Regístrate",
-    "confirmEmail": "Revisa tu correo para el enlace de confirmación."
+    "confirmEmail": "Revisa tu correo para el enlace de confirmación.",
+    "displayName": "Tu nombre",
+    "displayNamePlaceholder": "Cómo te ven tus amigos",
+    "displayNameTooShort": "Introduce un nombre con al menos 2 caracteres."
   },
   "layout": {
     "nav": {
@@ -88,12 +91,16 @@
     "descriptionPlaceholder": "¿Para qué fue este gasto?",
     "detectedSuggestion": "Sugerencia detectada",
     "invalidAmount": "Introduce un importe válido",
+    "cannotAddToClosedEvent": "No puedes añadir gastos a un evento cerrado.",
+    "eventNotFound": "Evento no encontrado o ya no disponible.",
+    "eventGroupMismatch": "Ese evento no pertenece al grupo seleccionado.",
     "createFailed": "No se pudo añadir el gasto",
     "updateFailed": "No se pudo actualizar el gasto",
     "submit": "Añadir gasto",
     "saveChanges": "Guardar cambios",
     "editTitle": "Editar gasto",
-    "editAction": "Editar gasto"
+    "editAction": "Editar gasto",
+    "onboardingFirstExpenseTip": "Consejo: divide este gasto con otras personas - nosotros llevamos los saldos automáticamente."
   },
   "settings": {
     "title": "Ajustes",
@@ -138,6 +145,10 @@
   },
   "dashboard": {
     "welcome": "¡Hola, {{name}}!",
+    "someone": "alguien",
+    "onboardingWelcomeTitle": "¡Bienvenido!",
+    "onboardingWelcomeDescription": "Divide gastos con amigos, viajes y eventos.",
+    "onboardingWelcomeCta": "Crea tu primer grupo",
     "subtitle": "Gestiona gastos de grupo y divide cuentas fácilmente.",
     "inviteTitle": "¡Invita a amigos y divide gastos sin esfuerzo!",
     "inviteTitleShort": "Invitar amigos",
@@ -241,6 +252,7 @@
     "you": "Tú",
     "createdAt": "Creado en",
     "refreshParticipantsFailed": "No se pudieron actualizar los participantes del evento",
+    "dataRefreshFailed": "No se pudieron cargar los datos más recientes. El cambio puede haberse guardado: inténtalo de nuevo o actualiza la página.",
     "addParticipantFailed": "No se pudo añadir el participante",
     "errorLoadingEvent": "Error al cargar evento",
     "eventNotFound": "Evento no encontrado",
@@ -463,7 +475,10 @@
     "statusActive": "Activos",
     "statusArchived": "Archivados",
     "statusAll": "Todos",
-    "empty": "No hay grupos. Crea uno arriba para empezar."
+    "empty": "No hay grupos. Crea uno arriba para empezar.",
+    "emptyOnboardingTitle": "Crea tu primer grupo",
+    "emptyOnboardingDescription": "Empieza a registrar gastos compartidos con amigos",
+    "emptyOnboardingCta": "Crear grupo"
   },
   "createGroup": {
     "nameLabel": "Nombre del grupo",
@@ -472,7 +487,8 @@
     "descriptionPlaceholder": "Gastos compartidos para...",
     "cancel": "Cancelar",
     "submit": "Crear grupo",
-    "createFailed": "No se pudo crear el grupo"
+    "createFailed": "No se pudo crear el grupo",
+    "createSuccess": "Grupo creado correctamente."
   },
   "groupCard": {
     "youOwe": "Debes {{amount}}",
@@ -492,6 +508,24 @@
     "settleRecordedError": "No se pudieron guardar los acuerdos.",
     "settleNothingToRecord": "No hay nada que registrar ahora. Prueba tras sincronizar los gastos o usa Saldar en el panel.",
     "dismissNotice": "Cerrar",
+    "onboardingNextExpenseBanner": "Grupo creado - siguiente paso: añade tu primer gasto",
+    "firstExpenseSuccessBanner": "Gasto guardado: los saldos y «quién debe a quién» se actualizan abajo.",
+    "soloMemberInviteNudge": "Sigues solo en este grupo. Invita a alguien para dividir y saldar.",
+    "tabOverview": "Resumen",
+    "tabExpenses": "Gastos",
+    "tabMembers": "Personas",
+    "membersSectionTitle": "Personas en este grupo",
+    "membersSectionSubtitle": "{{count}} personas en este grupo",
+    "membersInviteCta": "Invitar a más personas",
+    "membersSearchPlaceholder": "Buscar por nombre…",
+    "membersNoMatch": "Nadie coincide con la búsqueda.",
+    "memberRoleOwner": "Propietario",
+    "memberRoleMember": "Miembro",
+    "memberYou": "Tú",
+    "memberBalanceEven": "En equilibrio contigo",
+    "memberYouOweThem": "Debes {{amount}}",
+    "memberTheyOweYou": "Te debe {{amount}}",
+    "onboardingSettlementHint": "Puedes solicitar pagos para saldar balances",
     "totalExpenses": "Gastos totales",
     "yourBalance": "Tu saldo",
     "netPositionLabel": "Posición neta en este grupo",
@@ -539,6 +573,7 @@
     "whoOwesWhoEmptyEven": "Todo saldado — buen trabajo",
     "sectionTotalLabel": "Total",
     "noExpenses": "Aún no hay gastos",
+    "noExpensesDescription": "Añade tu primer gasto para empezar a seguir los saldos",
     "noDraftExpenses": "No hay gastos en borrador en este grupo.",
     "addFirstExpense": "Añadir gasto",
     "addExpense": "Añadir gasto",
@@ -582,6 +617,23 @@
     "settleHelpBody": "Calculamos quién debe a quién según los gastos compartidos. Al saldar cuentas, registras pagos para que todos queden en cero.",
     "settleHelpLearnMore": "Saber más"
   },
+  "groupOnboarding": {
+    "title": "Empecemos",
+    "subtitle": "Añade el primer gasto para ver quién debe a quién — o invita a gente para repartir juntos.",
+    "draftsHint": "Tienes gastos en borrador: confírmalos cuando quieras que cuenten en los saldos.",
+    "ctaFirstExpense": "Añadir primer gasto",
+    "ctaInvite": "Invitar personas",
+    "ctaEvent": "Crear evento"
+  },
+  "profileNameGate": {
+    "title": "¿Cómo te llamamos?",
+    "body": "Elige un nombre que tus amigos reconozcan en grupos y gastos.",
+    "nameLabel": "Nombre visible",
+    "namePlaceholder": "p. ej.: Alex o Alex García",
+    "continue": "Continuar",
+    "nameTooShort": "Introduce al menos 2 caracteres.",
+    "saveFailed": "No se pudo guardar. Inténtalo de nuevo."
+  },
   "manageGroup": {
     "title": "Gestionar grupo",
     "saveChanges": "Guardar cambios",
@@ -623,6 +675,7 @@
     "adjustedToSettleBalances": "Vista previa del reparto ajustado",
     "adjustedPreviewLine": "{{name}} paga {{adjusted}} en vez de {{base}}",
     "settleSuggestionNote": "Puedes cambiar a reparto manual para editar importes. Solo cambia la división de este gasto, no los registros de acuerdos.",
+    "onboardingFirstExpenseTip": "Consejo: divide este gasto con otras personas - nosotros llevamos los saldos automáticamente.",
     "splitEqual": "División igual",
     "splitManual": "Por participante",
     "splitPercentage": "Por porcentaje",
@@ -661,14 +714,21 @@
   },
   "invite": {
     "missingToken": "Falta el token de invitación.",
-    "groupIdMissing": "El ID del grupo no fue devuelto por accept-invite.",
+    "groupIdMissing": "No se pudo completar la invitación. Inténtalo de nuevo o pide un enlace nuevo.",
     "joinFailed": "No se pudo unir al grupo. La invitación puede ser inválida o haber caducado.",
     "joiningTitle": "Uniéndose al grupo...",
     "joiningBody": "Espera mientras procesamos tu invitación.",
     "errorTitle": "Error de invitación",
+    "errorExpired": "Esta invitación ha caducado. Pide a un miembro un enlace nuevo.",
+    "errorUsed": "Este enlace de invitación ya no es válido.",
+    "errorInvalid": "Este enlace de invitación no es válido.",
+    "errorAuth": "Debes iniciar sesión para aceptar una invitación.",
+    "errorServer": "Ha ocurrido un error en nuestro sistema. Inténtalo de nuevo en unos momentos.",
     "goToDashboard": "Ir al panel",
     "successTitle": "¡Te has unido al grupo!",
     "successBody": "Tu acceso se añadió correctamente.",
+    "successAlreadyMemberTitle": "Ya estás en este grupo",
+    "successAlreadyMemberBody": "Tu participación está activa. Puedes abrir el grupo cuando quieras.",
     "viewGroup": "Ver grupo"
   },
   "inviteModal": {
@@ -676,9 +736,11 @@
     "generating": "Generando enlace de invitación...",
     "close": "Cerrar",
     "shareHint": "Comparte este enlace con tus amigos para invitarlos a este grupo.",
+    "readySuccess": "Enlace de invitación listo — compártelo con tus amigos",
     "copied": "¡Copiado!",
     "copyLink": "Copiar enlace",
-    "share": "Compartir",
+    "shareWhatsApp": "Compartir por WhatsApp",
+    "sendEmail": "Enviar correo",
     "shareTitle": "Únete a mi grupo en Splitly",
     "shareText": "¡Únete a mi grupo en Splitly para dividir gastos fácilmente!"
   },

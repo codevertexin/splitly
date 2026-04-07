@@ -17,12 +17,14 @@ import {
 import { motion, AnimatePresence } from 'motion/react';
 import { BrandLogo } from './BrandLogo';
 import { formatCurrencyCents } from '../lib/dateTime';
+import { useTranslation } from 'react-i18next';
 
 interface DashboardProps {
   session: Session;
 }
 
 export function Dashboard({ session }: DashboardProps) {
+  const { t } = useTranslation();
   const zeroAmount = formatCurrencyCents(0);
   const [groups, setGroups] = useState<Group[]>([]);
   const [loading, setLoading] = useState(true);
@@ -31,6 +33,7 @@ export function Dashboard({ session }: DashboardProps) {
   const [actionLoading, setActionLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
+  const [successMessage, setSuccessMessage] = useState<string>('');
   const [selectedGroup, setSelectedGroup] = useState<Group | null>(null);
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [showSettleConfirm, setShowSettleConfirm] = useState(false);
@@ -100,11 +103,12 @@ export function Dashboard({ session }: DashboardProps) {
       await fetchGroups();
       setNewGroupName('');
       setNewGroupDesc('');
+      setSuccessMessage(t('createGroup.createSuccess'));
       setSuccess(true);
       setShowCreateForm(false);
       setTimeout(() => setSuccess(false), 3000);
     } catch (err: any) {
-      setError(err.message || 'Failed to create group');
+      setError(err.message || t('createGroup.createFailed'));
     } finally {
       setActionLoading(false);
     }
@@ -120,11 +124,12 @@ export function Dashboard({ session }: DashboardProps) {
     try {
       // Simulate settling up for now as there's no real backend for it yet
       await new Promise(resolve => setTimeout(resolve, 1000));
+      setSuccessMessage(t('groupDetail.settleRecordedSuccess'));
       setSuccess(true);
       setShowSettleConfirm(false);
       setTimeout(() => setSuccess(false), 3000);
     } catch (err: any) {
-      setError(err.message || 'Failed to settle up');
+      setError(err.message || t('groupDetail.settleRecordedError'));
     } finally {
       setActionLoading(false);
     }
@@ -140,7 +145,7 @@ export function Dashboard({ session }: DashboardProps) {
               <button 
                 onClick={() => handleSetSelectedGroup(null)}
                 className="p-2 bg-white hover:bg-slate-50 text-slate-500 hover:text-slate-900 rounded-xl border border-slate-100 transition-all shadow-sm"
-                title="Back to Dashboard"
+                title={t('layout.nav.dashboard')}
               >
                 <ArrowLeft className="w-5 h-5" />
               </button>
@@ -157,7 +162,7 @@ export function Dashboard({ session }: DashboardProps) {
             className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-slate-600 hover:text-red-600 hover:bg-red-50 rounded-xl transition-all"
           >
             <LogOut className="w-4 h-4" />
-            Sign Out
+            {t('layout.signOut')}
           </button>
         </div>
 
@@ -172,14 +177,14 @@ export function Dashboard({ session }: DashboardProps) {
             >
               <div className="p-8 border-b border-slate-50">
                 <div className="flex items-center justify-between mb-6">
-                  <h2 className="text-xl font-bold text-slate-900">My Groups</h2>
+                  <h2 className="text-xl font-bold text-slate-900">{t('groups.title')}</h2>
                   {!showCreateForm && (
                     <button 
                       onClick={() => setShowCreateForm(true)}
                       className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white text-sm font-bold rounded-xl hover:bg-blue-700 transition-all shadow-md shadow-blue-100"
                     >
                       <Plus className="w-4 h-4" />
-                      New Group
+                      {t('groups.newGroup')}
                     </button>
                   )}
                 </div>
@@ -195,24 +200,24 @@ export function Dashboard({ session }: DashboardProps) {
                       <form onSubmit={handleCreateGroup} className="space-y-4 mb-4">
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                           <div>
-                            <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1 ml-1">Group Name</label>
+                            <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1 ml-1">{t('createGroup.nameLabel')}</label>
                             <input
                               type="text"
                               required
                               value={newGroupName}
                               onChange={(e) => setNewGroupName(e.target.value)}
                               className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-all text-sm"
-                              placeholder="e.g. Ski Trip 2024"
+                              placeholder={t('createGroup.namePlaceholder')}
                             />
                           </div>
                           <div>
-                            <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1 ml-1">Description (Optional)</label>
+                            <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1 ml-1">{t('createGroup.descriptionLabel')}</label>
                             <input
                               type="text"
                               value={newGroupDesc}
                               onChange={(e) => setNewGroupDesc(e.target.value)}
                               className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-all text-sm"
-                              placeholder="Shared expenses for..."
+                              placeholder={t('createGroup.descriptionPlaceholder')}
                             />
                           </div>
                         </div>
@@ -226,7 +231,7 @@ export function Dashboard({ session }: DashboardProps) {
 
                         {success && (
                           <div className="p-3 bg-green-50 text-green-600 text-xs rounded-xl border border-green-100">
-                            Group created successfully!
+                            {successMessage}
                           </div>
                         )}
 
@@ -236,14 +241,14 @@ export function Dashboard({ session }: DashboardProps) {
                             onClick={() => setShowCreateForm(false)}
                             className="flex-1 py-3 bg-slate-100 text-slate-600 font-bold rounded-xl hover:bg-slate-200 transition-all flex items-center justify-center gap-2"
                           >
-                            Cancel
+                            {t('common.cancel')}
                           </button>
                           <button
                             type="submit"
                             disabled={actionLoading}
                             className="flex-[2] py-3 bg-blue-600 text-white font-bold rounded-xl hover:bg-blue-700 transition-all flex items-center justify-center gap-2 disabled:opacity-50 shadow-lg shadow-blue-100"
                           >
-                            {actionLoading ? <Loader2 className="w-5 h-5 animate-spin" /> : <><Plus className="w-5 h-5" /> Create Group</>}
+                            {actionLoading ? <Loader2 className="w-5 h-5 animate-spin" /> : <><Plus className="w-5 h-5" /> {t('createGroup.submit')}</>}
                           </button>
                         </div>
                       </form>
@@ -253,7 +258,7 @@ export function Dashboard({ session }: DashboardProps) {
               </div>
 
               <div className="p-8 bg-slate-50/30">
-                <h3 className="text-sm font-semibold text-slate-400 uppercase tracking-wider mb-4">Your Active Groups</h3>
+                <h3 className="text-sm font-semibold text-slate-400 uppercase tracking-wider mb-4">{t('groups.activeGroups')}</h3>
                 
                 {loading ? (
                   <div className="flex items-center justify-center py-12">
@@ -264,7 +269,7 @@ export function Dashboard({ session }: DashboardProps) {
                     <div className="w-12 h-12 bg-slate-100 rounded-2xl flex items-center justify-center mx-auto mb-3">
                       <Users className="w-6 h-6 text-slate-300" />
                     </div>
-                    <p className="text-slate-500 text-sm">No groups found. Create one above to get started!</p>
+                    <p className="text-slate-500 text-sm">{t('groups.empty')}</p>
                   </div>
                 ) : (
                   <div className="space-y-3">
@@ -282,7 +287,7 @@ export function Dashboard({ session }: DashboardProps) {
                           </div>
                           <div>
                             <h4 className="font-bold text-slate-900 text-sm">{group.name}</h4>
-                            <p className="text-slate-400 text-xs line-clamp-1">{group.description || 'No description'}</p>
+                            <p className="text-slate-400 text-xs line-clamp-1">{group.description || t('groupDetail.noDescription')}</p>
                           </div>
                         </div>
                         <div className="flex items-center gap-3">
@@ -311,7 +316,7 @@ export function Dashboard({ session }: DashboardProps) {
                     </div>
                     <div>
                       <h2 className="text-2xl font-bold text-slate-900">{selectedGroup.name}</h2>
-                      <p className="text-slate-500 text-sm">{selectedGroup.description || 'No description'}</p>
+                      <p className="text-slate-500 text-sm">{selectedGroup.description || t('groupDetail.noDescription')}</p>
                     </div>
                   </div>
                   
@@ -321,7 +326,7 @@ export function Dashboard({ session }: DashboardProps) {
                       className="hidden sm:flex items-center gap-2 px-4 py-2 bg-green-600 text-white text-sm font-bold rounded-xl hover:bg-green-700 transition-all shadow-md shadow-green-100"
                     >
                       <Check className="w-4 h-4" />
-                      Settle Up
+                      {t('groupDetail.settleUpCta')}
                     </button>
                   )}
                 </div>
@@ -335,8 +340,8 @@ export function Dashboard({ session }: DashboardProps) {
                       className="flex items-center gap-3 p-4 bg-green-50 rounded-2xl border border-green-100 mb-8"
                     >
                       <div className="flex-1">
-                        <p className="text-sm font-bold text-green-900">Confirm Settle Up?</p>
-                        <p className="text-xs text-green-700">This will mark all debts as settled in this group.</p>
+                        <p className="text-sm font-bold text-green-900">{t('groupDetail.confirmSettleTitle')}</p>
+                        <p className="text-xs text-green-700">{t('groupDetail.confirmSettleBody')}</p>
                       </div>
                       <div className="flex gap-2">
                         <button 
@@ -350,7 +355,7 @@ export function Dashboard({ session }: DashboardProps) {
                           disabled={actionLoading}
                           className="px-4 py-2 bg-green-600 text-white text-sm font-bold rounded-xl hover:bg-green-700 transition-all shadow-md shadow-green-100 flex items-center gap-2"
                         >
-                          {actionLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Confirm'}
+                          {actionLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : t('groupDetail.confirm')}
                         </button>
                       </div>
                     </motion.div>
@@ -364,26 +369,26 @@ export function Dashboard({ session }: DashboardProps) {
                     className="sm:hidden w-full mb-8 flex items-center justify-center gap-2 px-4 py-3 bg-green-600 text-white text-sm font-bold rounded-xl hover:bg-green-700 transition-all shadow-md shadow-green-100"
                   >
                     <Check className="w-4 h-4" />
-                    Settle Up
+                    {t('groupDetail.settleUpCta')}
                   </button>
                 )}
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
                   <div className="bg-blue-50 p-6 rounded-2xl border border-blue-100">
-                    <p className="text-xs font-bold text-blue-600 uppercase tracking-wider mb-1">Total Expenses</p>
+                    <p className="text-xs font-bold text-blue-600 uppercase tracking-wider mb-1">{t('groupDetail.totalExpenses')}</p>
                     <p className="text-2xl font-bold text-blue-900">{zeroAmount}</p>
                   </div>
                   <div className="bg-green-50 p-6 rounded-2xl border border-green-100">
-                    <p className="text-xs font-bold text-green-600 uppercase tracking-wider mb-1">Your Balance</p>
+                    <p className="text-xs font-bold text-green-600 uppercase tracking-wider mb-1">{t('groupDetail.yourBalance')}</p>
                     <p className="text-2xl font-bold text-green-900">{zeroAmount}</p>
                   </div>
                 </div>
 
                 <div className="text-center py-20 border-2 border-dashed border-slate-100 rounded-3xl">
                   <Receipt className="w-12 h-12 text-slate-200 mx-auto mb-4" />
-                  <p className="text-slate-400 font-medium">No expenses recorded in this group yet.</p>
+                  <p className="text-slate-400 font-medium">{t('groupDetail.noExpensesDescription')}</p>
                   <button className="mt-4 px-6 py-2 bg-blue-600 text-white font-bold rounded-xl hover:bg-blue-700 transition-all">
-                    Add First Expense
+                    {t('groupDetail.addFirstExpense')}
                   </button>
                 </div>
               </div>
@@ -393,7 +398,7 @@ export function Dashboard({ session }: DashboardProps) {
 
         {/* Footer info */}
         <p className="mt-8 text-center text-slate-400 text-xs">
-          Logged in as <span className="text-slate-600 font-medium">{session.user.email}</span>
+          {t('layout.loggedInAs')} <span className="text-slate-600 font-medium">{session.user.email}</span>
         </p>
       </div>
     </div>

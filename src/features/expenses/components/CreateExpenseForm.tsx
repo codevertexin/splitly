@@ -1,15 +1,16 @@
-import React, { useMemo, useState } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import { Plus, AlertCircle, Receipt } from 'lucide-react';
 import { motion } from 'motion/react';
 import { useTranslation } from 'react-i18next';
 import { Input } from '../../../components/ui/Input';
 import { Button } from '../../../components/ui/Button';
 import { MemberAvatar } from '../../../components/MemberAvatar';
-import { Group, Event } from '../../../types';
 import { supabase } from '../../../lib/supabase';
 import { classifyExpenseTitle } from '../expenseSuggestions';
 import { formatCentsAsDecimal, formatCurrencyCents, formatDecimal } from '../../../lib/dateTime';
 import { isAccountingEligibleExpenseRow } from '../../../lib/accountingExpenses';
+import { assertEventAllowsNewExpense } from '../../../lib/eventExpenseGuards';
+import { EXPENSES_CHANGED_EVENT, expensesChangedAffectsGroup, notifyExpensesChanged } from '../../../lib/expenseEvents';
 import {
   buildEqualSharesCents,
   canApplySettlementAwareEqualSplit,
@@ -18,6 +19,8 @@ import {
   runSettlementAwareSelfChecks,
   suggestSettlementAwareEqualSplit,
 } from '../../../lib/settlementSplit';
+import { getOnboardingState, updateOnboardingState } from '../../../lib/onboardingState';
+import { trackProductEvent } from '../../../lib/productTracking';
 
 interface CreateExpenseFormProps {
   groupId: string;
@@ -62,6 +65,7 @@ export function CreateExpenseForm({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [expenseStatus, setExpenseStatus] = useState<'draft' | 'confirmed'>(initialStatus);
+  const onboardingState = getOnboardingState();
 
   React.useEffect(() => {
     setTitle(initialTitle);
@@ -76,35 +80,46 @@ export function CreateExpenseForm({
     setParticipantIds(participants.map((p) => p.user_id));
   }, [participants, session.user.id]);
 
-  React.useEffect(() => {
-    const run = async () => {
-      if (!groupId || !session?.user?.id || participants.length === 0) {
-        setDebtsToCurrentUser({});
-        return;
-      }
-      const { data, error } = await supabase
-        .from('expenses')
-        .select('id, paid_by_user_id, status, event:events(status), splits:expense_splits(user_id, share_cents)')
-        .eq('group_id', groupId)
-        .is('deleted_at', null);
-      if (error) {
-        setDebtsToCurrentUser({});
-        return;
-      }
-      const eligible = (data || []).filter((row) => isAccountingEligibleExpenseRow(row as any)) as Array<{
-        paid_by_user_id: string;
-        splits?: Array<{ user_id: string; share_cents: number }>;
-      }>;
-      setDebtsToCurrentUser(
-        computeDebtsToCurrentUser({
-          members: participants,
-          currentUserId: session.user.id,
-          eligibleExpenses: eligible,
-        }),
-      );
-    };
-    void run();
+  const loadDebtsToCurrentUser = useCallback(async () => {
+    if (!groupId || !session?.user?.id || participants.length === 0) {
+      setDebtsToCurrentUser({});
+      return;
+    }
+    const { data, error } = await supabase
+      .from('expenses')
+      .select('id, paid_by_user_id, status, event:events(status), splits:expense_splits(user_id, share_cents)')
+      .eq('group_id', groupId)
+      .is('deleted_at', null);
+    if (error) {
+      setDebtsToCurrentUser({});
+      return;
+    }
+    const eligible = (data || []).filter((row) => isAccountingEligibleExpenseRow(row as any)) as Array<{
+      paid_by_user_id: string;
+      splits?: Array<{ user_id: string; share_cents: number }>;
+    }>;
+    setDebtsToCurrentUser(
+      computeDebtsToCurrentUser({
+        members: participants,
+        currentUserId: session.user.id,
+        eligibleExpenses: eligible,
+      }),
+    );
   }, [groupId, participants, session.user.id]);
+
+  React.useEffect(() => {
+    void loadDebtsToCurrentUser();
+  }, [loadDebtsToCurrentUser]);
+
+  React.useEffect(() => {
+    const onChanged = (ev: globalThis.Event) => {
+      const detail = (ev as CustomEvent<{ groupId?: string }>).detail;
+      if (!expensesChangedAffectsGroup(detail, groupId)) return;
+      void loadDebtsToCurrentUser();
+    };
+    window.addEventListener(EXPENSES_CHANGED_EVENT, onChanged);
+    return () => window.removeEventListener(EXPENSES_CHANGED_EVENT, onChanged);
+  }, [groupId, loadDebtsToCurrentUser]);
 
   const matchedSuggestion = classifyExpenseTitle(title);
   const participantDisplayName = (participant: { full_name?: string | null; user_id: string }) =>
@@ -153,10 +168,21 @@ export function CreateExpenseForm({
     setLoading(true);
 
     try {
+      let createdExpenseId: string | null = null;
       const euros = parseFloat(amount.replace(',', '.'));
       const amountCents = Math.round(euros * 100);
       if (Number.isNaN(euros) || amountCents <= 0) {
         throw new Error(t('expenseForm.invalidAmount'));
+      }
+
+      try {
+        await assertEventAllowsNewExpense(supabase, groupId, eventId);
+      } catch (guardErr: unknown) {
+        const code = guardErr instanceof Error ? guardErr.message : '';
+        if (code === 'EVENT_CLOSED') throw new Error(t('expenseForm.cannotAddToClosedEvent'));
+        if (code === 'EVENT_NOT_FOUND') throw new Error(t('expenseForm.eventNotFound'));
+        if (code === 'EVENT_GROUP_MISMATCH') throw new Error(t('expenseForm.eventGroupMismatch'));
+        throw guardErr instanceof Error ? guardErr : new Error(t('expenseForm.createFailed'));
       }
 
       if (participants.length) {
@@ -261,6 +287,7 @@ export function CreateExpenseForm({
         if (data?.error) throw new Error(data.error);
 
         const created = data as { expense?: { id: string }; split_method?: string } | undefined;
+        createdExpenseId = created?.expense?.id ?? null;
         if (
           import.meta.env.DEV &&
           created?.expense?.id &&
@@ -311,6 +338,24 @@ export function CreateExpenseForm({
         if (insertError) throw insertError;
       }
 
+      notifyExpensesChanged({ groupId });
+      if (!onboardingState.hasCreatedExpense) {
+        // Funnel: user completed their first expense creation.
+        void trackProductEvent('first_expense_created', {
+          once_key: 'first_expense_created',
+          entity_type: 'expense',
+          entity_id: createdExpenseId,
+        });
+        updateOnboardingState({ hasCreatedExpense: true });
+      }
+      if (settleAwareEnabled) {
+        // Funnel: settle-aware split was applied to a saved expense.
+        void trackProductEvent('smart_settlement_applied', {
+          entity_type: 'expense',
+          entity_id: createdExpenseId,
+          metadata: { split_method: effectiveSplitMethod, suggestionApplied: settlementSuggestion.applied },
+        });
+      }
       onSuccess();
     } catch (err: any) {
       setError(err.message || t('expenseForm.createFailed'));
@@ -434,7 +479,14 @@ export function CreateExpenseForm({
                   type="checkbox"
                   className="rounded border-slate-300 text-blue-600 focus:ring-blue-500"
                   checked={settleAwareEnabled}
-                  onChange={(e) => setSettleAwareEnabled(e.target.checked)}
+                  onChange={(e) => {
+                    const checked = e.target.checked;
+                    if (checked && !settleAwareEnabled) {
+                      // Funnel: user enabled settlement-aware mode while creating an expense.
+                      void trackProductEvent('smart_settlement_enabled');
+                    }
+                    setSettleAwareEnabled(checked);
+                  }}
                 />
                 {t('groupExpense.useToSettleBalances')}
               </label>
@@ -642,6 +694,12 @@ export function CreateExpenseForm({
           {t('expenseForm.submit')}
         </Button>
       </div>
+
+      {!onboardingState.hasCreatedExpense && (
+        <p className="text-xs text-slate-500">
+          {t('expenseForm.onboardingFirstExpenseTip')}
+        </p>
+      )}
     </form>
   );
 }

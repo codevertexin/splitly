@@ -62,14 +62,16 @@ export function EventDetailPage({ session }: EventDetailPageProps) {
     }
   };
 
-  const handleRefresh = async () => {
+  const handleRefresh = async (): Promise<{ success: boolean; error?: string }> => {
     if (!id) {
-      return;
+      return { success: false, error: t('eventDetail.eventNotFound') };
     }
     const result = await getEventDetails(id);
-    if (result.success) {
+    if (result.success && result.data) {
       setEvent(result.data);
+      return { success: true };
     }
+    return { success: false, error: result.error || t('eventDetail.dataRefreshFailed') };
   };
 
   const handleUpdateEvent = async (input: {
@@ -84,13 +86,13 @@ export function EventDetailPage({ session }: EventDetailPageProps) {
       return { success: false as const, error: t('eventDetail.eventNotFound') };
     }
     const result = await updateEventDetails(id, input);
-    if (result.success) {
-      const refreshResult = await getEventDetails(id);
-      if (refreshResult.success) {
-        setEvent(refreshResult.data);
-      }
+    if (!result.success) return result;
+    const refreshResult = await getEventDetails(id);
+    if (!refreshResult.success || !refreshResult.data) {
+      return { success: false as const, error: refreshResult.error || t('eventDetail.dataRefreshFailed') };
     }
-    return result;
+    setEvent(refreshResult.data);
+    return { success: true as const };
   };
 
   const handleCloseEvent = async () => {
@@ -112,13 +114,13 @@ export function EventDetailPage({ session }: EventDetailPageProps) {
       return { success: false as const, error: t('eventDetail.eventNotFound') };
     }
     const result = await finalizeEvent(id);
-    if (result.success) {
-      const refreshResult = await getEventDetails(id);
-      if (refreshResult.success) {
-        setEvent(refreshResult.data);
-      }
+    if (!result.success) return result;
+    const refreshResult = await getEventDetails(id);
+    if (!refreshResult.success || !refreshResult.data) {
+      return { success: false as const, error: refreshResult.error || t('eventDetail.dataRefreshFailed') };
     }
-    return result;
+    setEvent(refreshResult.data);
+    return { success: true as const };
   };
 
   if (loading) {

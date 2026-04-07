@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '../lib/supabase';
+import { EXPENSES_CHANGED_EVENT, expensesChangedAffectsGroup } from '../lib/expenseEvents';
 import { isAccountingEligibleExpenseRow } from '../lib/accountingExpenses';
 
 function netCents(raw: unknown): number {
@@ -96,6 +97,16 @@ export function useGroupAllBalancesZero(groupId: string | undefined) {
   useEffect(() => {
     void fetchCheck();
   }, [fetchCheck]);
+
+  useEffect(() => {
+    const onChanged = (ev: Event) => {
+      const detail = (ev as CustomEvent<{ groupId?: string }>).detail;
+      if (!expensesChangedAffectsGroup(detail, groupId)) return;
+      void fetchCheck();
+    };
+    window.addEventListener(EXPENSES_CHANGED_EVENT, onChanged);
+    return () => window.removeEventListener(EXPENSES_CHANGED_EVENT, onChanged);
+  }, [fetchCheck, groupId]);
 
   return { allBalancesZero: allZero, loading, error, refetch: fetchCheck };
 }

@@ -5,6 +5,7 @@ import { Mail, Lock, Loader2, Eye, EyeOff, ShieldCheck } from 'lucide-react';
 import { motion } from 'motion/react';
 import { BrandLogo } from './BrandLogo';
 import { getStoredAppInviteRef } from '../lib/appInviteRef';
+import { trackProductEvent } from '../lib/productTracking';
 
 export function Auth() {
   const { t } = useTranslation();
@@ -14,6 +15,7 @@ export function Auth() {
   const [showPassword, setShowPassword] = useState(false);
   const [rememberMe, setRememberMe] = useState(false);
   const [isSignUp, setIsSignUp] = useState(false);
+  const [displayName, setDisplayName] = useState('');
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
   const handleAuth = async (e: React.FormEvent) => {
@@ -23,19 +25,39 @@ export function Auth() {
 
     try {
       if (isSignUp) {
+        const trimmedName = displayName.trim();
+        if (trimmedName.length < 2) {
+          setMessage({ type: 'error', text: t('auth.displayNameTooShort') });
+          setLoading(false);
+          return;
+        }
         const appInvitedBy = getStoredAppInviteRef();
-        const { error } = await supabase.auth.signUp({
+        const { data, error } = await supabase.auth.signUp({
           email,
           password,
-          ...(appInvitedBy
-            ? { options: { data: { app_invited_by: appInvitedBy } } }
-            : {}),
+          options: {
+            data: {
+              full_name: trimmedName,
+              ...(appInvitedBy ? { app_invited_by: appInvitedBy } : {}),
+            },
+          },
         });
         if (error) throw error;
+        // Funnel: user successfully completes account creation step.
+        void trackProductEvent('signup_completed', {
+          user_id: data.user?.id ?? null,
+          once_key: 'signup_completed',
+          metadata: { hasAppInviteRef: Boolean(appInvitedBy) },
+        });
         setMessage({ type: 'success', text: t('auth.confirmEmail') });
       } else {
-        const { error } = await supabase.auth.signInWithPassword({ email, password });
+        const { data, error } = await supabase.auth.signInWithPassword({ email, password });
         if (error) throw error;
+        // Funnel: user completed login and entered product session.
+        void trackProductEvent('login_completed', {
+          user_id: data.user?.id ?? null,
+          metadata: { method: 'password' },
+        });
       }
     } catch (error: any) {
       setMessage({ type: 'error', text: error.message });
@@ -68,6 +90,22 @@ export function Auth() {
           </p>
 
         <form onSubmit={handleAuth} className="space-y-4">
+          {isSignUp && (
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">{t('auth.displayName')}</label>
+              <input
+                type="text"
+                required
+                minLength={2}
+                autoComplete="name"
+                value={displayName}
+                onChange={(e) => setDisplayName(e.target.value)}
+                className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl placeholder:text-slate-400 hover:border-slate-300 focus:bg-white focus:ring-4 focus:ring-blue-500/15 focus:border-blue-500 transition-all outline-none"
+                placeholder={t('auth.displayNamePlaceholder')}
+              />
+            </div>
+          )}
+
           <div>
             <label className="block text-sm font-medium text-slate-700 mb-1">{t('auth.email')}</label>
             <div className="relative">

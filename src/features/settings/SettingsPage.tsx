@@ -12,6 +12,7 @@ import {
   useUserProfile,
   normalizeUsernameInput,
   validateUsernameOrEmpty,
+  type ProfileSaveFailure,
 } from '../../hooks/useUserProfile';
 import { AVATAR_PRESET_PATHS } from '../../lib/avatarPresets';
 
@@ -207,16 +208,16 @@ export function SettingsPage({ session }: SettingsPageProps) {
         revokeBlob(prev);
         return null;
       });
-      return;
+    } else {
+      const err = result as ProfileSaveFailure;
+      if (err.code === 'USERNAME_INVALID') setSaveError(t('settings.usernameInvalid'));
+      else if (err.code === 'USERNAME_TAKEN') setSaveError(t('settings.usernameTaken'));
+      else if (err.code === 'AVATAR_UPLOAD_FAILED') {
+        if (err.error === 'INVALID_TYPE') setSaveError(t('settings.avatarInvalidType'));
+        else if (err.error === 'TOO_LARGE') setSaveError(t('settings.avatarTooLarge'));
+        else setSaveError(t('settings.avatarUploadFailed'));
+      } else setSaveError(err.error ?? t('settings.saveError'));
     }
-
-    if (result.code === 'USERNAME_INVALID') setSaveError(t('settings.usernameInvalid'));
-    else if (result.code === 'USERNAME_TAKEN') setSaveError(t('settings.usernameTaken'));
-    else if (result.code === 'AVATAR_UPLOAD_FAILED') {
-      if (result.error === 'INVALID_TYPE') setSaveError(t('settings.avatarInvalidType'));
-      else if (result.error === 'TOO_LARGE') setSaveError(t('settings.avatarTooLarge'));
-      else setSaveError(t('settings.avatarUploadFailed'));
-    } else setSaveError(result.error ?? t('settings.saveError'));
   };
 
   return (

@@ -1,11 +1,12 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Session } from '@supabase/supabase-js';
 import { supabase } from '../lib/supabase';
-import { isAccountingEligibleExpense } from '../lib/accountingExpenses';
+import { EXPENSES_CHANGED_EVENT, expensesChangedAffectsGroup, notifyExpensesChanged } from '../lib/expenseEvents';
+import { filterAccountingEligibleExpenses } from '../lib/accountingExpenses';
 import { Expense } from '../types';
 
 export type GroupExpenseRow = Expense & {
-  profiles?: { full_name: string | null; avatar_url: string | null } | null;
+  profiles?: { full_name: string | null; avatar_url: string | null; username: string | null } | null;
   event?: {
     id: string;
     title: string;
@@ -56,7 +57,7 @@ export function useGroupExpenses(session: Session | null, groupId: string | unde
       const { data, error: qError } = await supabase
         .from('expenses')
         .select(
-          '*, profiles!expenses_paid_by_user_id_fkey(full_name, avatar_url), event:events(id, title, status, starts_at, ends_at), splits:expense_splits(user_id, share_cents, percentage)',
+          '*, profiles!expenses_paid_by_user_id_fkey(full_name, avatar_url, username), event:events(id, title, status, starts_at, ends_at), splits:expense_splits(user_id, share_cents, percentage)',
         )
         .eq('group_id', groupId)
         .is('deleted_at', null)
@@ -72,7 +73,8 @@ export function useGroupExpenses(session: Session | null, groupId: string | unde
         return { ...row, profiles: profile ?? null, event: event ?? null, splits: row.splits ?? [] } as GroupExpenseRow;
       });
       setAllExpenses(rows);
-      setExpenses(rows.filter(isAccountingEligibleExpense));
+      /** Accounting-only subset (balances, pairwise, “confirmed” list in group UI). Full list: `allExpenses`. */
+      setExpenses(filterAccountingEligibleExpenses(rows));
     } catch (err: any) {
       console.error('useGroupExpenses fetch:', err.message);
       setError(err.message);
@@ -86,6 +88,16 @@ export function useGroupExpenses(session: Session | null, groupId: string | unde
   useEffect(() => {
     fetchExpenses();
   }, [fetchExpenses]);
+
+  useEffect(() => {
+    const onChanged = (ev: Event) => {
+      const detail = (ev as CustomEvent<{ groupId?: string }>).detail;
+      if (!expensesChangedAffectsGroup(detail, groupId)) return;
+      void fetchExpenses();
+    };
+    window.addEventListener(EXPENSES_CHANGED_EVENT, onChanged);
+    return () => window.removeEventListener(EXPENSES_CHANGED_EVENT, onChanged);
+  }, [fetchExpenses, groupId]);
 
   const createExpense = async (input: CreateExpenseInput) => {
     if (!session || !groupId) {
@@ -173,6 +185,7 @@ export function useGroupExpenses(session: Session | null, groupId: string | unde
       }
 
       await fetchExpenses();
+      notifyExpensesChanged({ groupId });
       return { success: true as const };
     } catch (err: any) {
       const msg = err.message || 'Failed to create expense';
@@ -229,6 +242,7 @@ export function useGroupExpenses(session: Session | null, groupId: string | unde
       }
 
       await fetchExpenses();
+      notifyExpensesChanged({ groupId });
       return { success: true as const };
     } catch (err: any) {
       return { success: false as const, error: err.message || 'Failed to update expense' };

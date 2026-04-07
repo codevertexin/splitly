@@ -2,6 +2,8 @@ import { useState, useEffect } from 'react';
 import { Session } from '@supabase/supabase-js';
 import { supabase } from '../lib/supabase';
 import { formatCurrencyCents } from '../lib/dateTime';
+import { isAccountingEligibleExpenseRow } from '../lib/accountingExpenses';
+import { EXPENSES_CHANGED_EVENT } from '../lib/expenseEvents';
 
 export interface ActivityItem {
   id: string;
@@ -121,10 +123,7 @@ export function useDashboardData(session: Session) {
         const ledgerByUser = new Map<string, Ledger>();
 
         for (const row of rows || []) {
-          const rawEvent = row.event as unknown;
-          const event = Array.isArray(rawEvent) ? rawEvent[0] : rawEvent;
-          if ((event as { status?: string } | null)?.status === 'draft') continue;
-          if (row.status !== 'confirmed') continue;
+          if (!isAccountingEligibleExpenseRow(row as { status?: string; event?: unknown })) continue;
 
           const rawSplits = row.splits as unknown;
           const splits = (Array.isArray(rawSplits) ? rawSplits : []) as Array<{ user_id: string; share_cents: number }>;
@@ -222,8 +221,15 @@ export function useDashboardData(session: Session) {
     };
 
     void fetchRecentActivity();
+
+    const onExpensesChanged = () => {
+      void fetchRecentActivity();
+    };
+    window.addEventListener(EXPENSES_CHANGED_EVENT, onExpensesChanged);
+
     return () => {
       mounted = false;
+      window.removeEventListener(EXPENSES_CHANGED_EVENT, onExpensesChanged);
     };
   }, [session, locale]);
 

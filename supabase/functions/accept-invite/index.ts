@@ -24,12 +24,12 @@ serve(async (req) => {
     }
 
     if (req.method !== "POST") {
-      return jsonResponse({ error: "Method not allowed" }, 405);
+      return jsonResponse({ error: "Method not allowed", code: "method_not_allowed" }, 405);
     }
 
     const authHeader = req.headers.get("Authorization");
     if (!authHeader) {
-      return jsonResponse({ error: "Missing auth" }, 401);
+      return jsonResponse({ error: "Missing auth", code: "missing_auth" }, 401);
     }
 
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
@@ -43,78 +43,133 @@ serve(async (req) => {
     const { data: { user } } = await userClient.auth.getUser();
 
     if (!user) {
-      return jsonResponse({ error: "Unauthorized" }, 401);
+      return jsonResponse({ error: "Unauthorized", code: "unauthorized" }, 401);
+    }
+
+    let body: { token?: string };
+    try {
+      body = await req.json();
+    } catch {
+      return jsonResponse({ error: "Invalid JSON body", code: "invalid_body" }, 400);
+    }
+
+    const token = typeof body?.token === "string" ? body.token.trim() : "";
+    if (!token) {
+      return jsonResponse({ error: "Missing token", code: "missing_token" }, 400);
     }
 
     const admin = createClient(supabaseUrl, serviceKey);
 
-    const { token } = await req.json();
-
-    const { data: invite } = await admin
+    const { data: invite, error: inviteError } = await admin
       .from("group_invites")
-      .select("*")
+      .select("id, group_id, status, expires_at, invited_by, token")
       .eq("token", token)
-      .single();
+      .maybeSingle();
+
+    if (inviteError) {
+      console.error("accept-invite lookup:", inviteError);
+      return jsonResponse({ error: "Could not validate invite", code: "lookup_failed" }, 500);
+    }
 
     if (!invite) {
-      return jsonResponse({ error: "Invalid invite" }, 404);
+      return jsonResponse({ error: "Invalid or unknown invite link", code: "invalid_invite" }, 404);
+    }
+
+    const { data: existingMember } = await admin
+      .from("group_members")
+      .select("id")
+      .eq("group_id", invite.group_id)
+      .eq("user_id", user.id)
+      .eq("status", "active")
+      .maybeSingle();
+
+    const markAccepted = async () => {
+      if (invite.status === "pending") {
+        await admin.from("group_invites").update({ status: "accepted" }).eq("id", invite.id);
+      }
+    };
+
+    const syncContacts = async () => {
+      const inviterId = invite.invited_by as string;
+      if (inviterId && inviterId !== user.id) {
+        await admin.from("user_contacts").upsert(
+          [
+            {
+              owner_user_id: inviterId,
+              contact_user_id: user.id,
+              source: "group_invite",
+              category: "friend",
+              status: "active",
+            },
+            {
+              owner_user_id: user.id,
+              contact_user_id: inviterId,
+              source: "group_invite",
+              category: "friend",
+              status: "active",
+            },
+          ],
+          {
+            onConflict: "owner_user_id,contact_user_id",
+            ignoreDuplicates: true,
+          },
+        );
+      }
+    };
+
+    if (existingMember) {
+      await markAccepted();
+      await syncContacts();
+      return jsonResponse({
+        success: true,
+        group_id: invite.group_id,
+        status: "already_member",
+      });
+    }
+
+    if (invite.status === "pending" && new Date(invite.expires_at) < new Date()) {
+      return jsonResponse({ error: "This invite has expired", code: "invite_expired" }, 400);
     }
 
     if (invite.status !== "pending") {
-      return jsonResponse({ error: "Invite already used" }, 400);
+      return jsonResponse({ error: "This invite link is no longer valid", code: "invite_used" }, 400);
     }
 
-    if (new Date(invite.expires_at) < new Date()) {
-      return jsonResponse({ error: "Invite expired" }, 400);
-    }
-
-    // adicionar ao grupo
-    await admin.from("group_members").insert({
+    const { error: insertError } = await admin.from("group_members").insert({
       group_id: invite.group_id,
       user_id: user.id,
       role: "member",
       status: "active",
     });
 
-    // marcar como aceite
-    await admin
-      .from("group_invites")
-      .update({ status: "accepted" })
-      .eq("id", invite.id);
-
-    const inviterId = invite.invited_by as string;
-    if (inviterId && inviterId !== user.id) {
-      await admin.from("user_contacts").upsert(
-        [
-          {
-            owner_user_id: inviterId,
-            contact_user_id: user.id,
-            source: "group_invite",
-            category: "friend",
-            status: "active",
-          },
-          {
-            owner_user_id: user.id,
-            contact_user_id: inviterId,
-            source: "group_invite",
-            category: "friend",
-            status: "active",
-          },
-        ],
-        {
-          onConflict: "owner_user_id,contact_user_id",
-          ignoreDuplicates: true,
-        },
-      );
+    if (insertError) {
+      const msg = insertError.message || "";
+      if (msg.includes("duplicate") || msg.includes("unique") || insertError.code === "23505") {
+        await markAccepted();
+        await syncContacts();
+        return jsonResponse({
+          success: true,
+          group_id: invite.group_id,
+          status: "already_member",
+        });
+      }
+      console.error("accept-invite insert:", insertError);
+      return jsonResponse({ error: "Could not join group", code: "join_failed", details: msg }, 500);
     }
+
+    await markAccepted();
+    await syncContacts();
 
     return jsonResponse({
       success: true,
       group_id: invite.group_id,
+      status: "joined",
     });
   } catch (err) {
+    console.error("accept-invite:", err);
     return jsonResponse({
       error: "Server error",
+      code: "server_error",
       details: err instanceof Error ? err.message : String(err),
     }, 500);
   }

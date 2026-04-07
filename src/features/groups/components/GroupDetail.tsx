@@ -17,6 +17,9 @@ import {
   Info,
   ExternalLink,
   CheckCircle2,
+  Search,
+  LayoutGrid,
+  Wallet,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Group } from '../../../types';
@@ -26,9 +29,10 @@ import { Button } from '../../../components/ui/Button';
 import { InviteModal } from './InviteModal';
 import { MemberAvatar } from '../../../components/MemberAvatar';
 import { formatCurrencyCents, formatDateOnly } from '../../../lib/dateTime';
-import { isAccountingEligibleExpense } from '../../../lib/accountingExpenses';
 import { computePairwiseNetVsMe } from '../../../lib/groupPairwiseBalances';
 import { iconForExpenseTitle } from '../../expenses/expenseSuggestions';
+import { GroupOnboardingHero } from './GroupOnboardingHero';
+import { socialDisplayName } from '../../../lib/displayName';
 
 interface GroupDetailProps {
   group: Group;
@@ -72,14 +76,25 @@ interface GroupDetailProps {
   actionLoading: boolean;
   /** Refetch group balance (e.g. Retry when breakdown failed). */
   onRetryBalance?: () => void;
+  showOnboardingNextExpenseBanner?: boolean;
+  onDismissOnboardingNextExpenseBanner?: () => void;
+  highlightAddExpenseCta?: boolean;
+  showSettlementHint?: boolean;
+  /** Após a primeira despesa confirmada — feedback breve sem alterar cálculos. */
+  showFirstExpenseSuccessBanner?: boolean;
+  onDismissFirstExpenseSuccessBanner?: () => void;
 }
 
 function expensePayerName(expense: GroupExpenseRow, members: GroupMemberRow[]) {
-  const fromProfile = expense.profiles?.full_name?.trim();
-  if (fromProfile) return fromProfile;
   const m = members.find((x) => x.user_id === expense.paid_by_user_id);
-  if (m) return memberLabel(m);
-  return expense.paid_by_user_id;
+  const prof = expense.profiles;
+  return socialDisplayName(
+    {
+      full_name: prof?.full_name ?? m?.full_name ?? null,
+      username: prof?.username ?? m?.username ?? null,
+    },
+    expense.paid_by_user_id,
+  );
 }
 
 type ExpenseSection = {
@@ -197,6 +212,12 @@ export function GroupDetail({
   inviteModalProps,
   actionLoading,
   onRetryBalance,
+  showOnboardingNextExpenseBanner = false,
+  onDismissOnboardingNextExpenseBanner,
+  highlightAddExpenseCta = false,
+  showSettlementHint = false,
+  showFirstExpenseSuccessBanner = false,
+  onDismissFirstExpenseSuccessBanner,
 }: GroupDetailProps) {
   const settleBusy = settleActionLoading ?? actionLoading;
   const { t, i18n } = useTranslation();
@@ -210,6 +231,8 @@ export function GroupDetail({
   const [statusFilter, setStatusFilter] = useState<'all' | 'draft' | 'confirmed'>('all');
   const [confirmedLimit, setConfirmedLimit] = useState(PAGE_CHUNK);
   const [draftLimit, setDraftLimit] = useState(PAGE_CHUNK);
+  const [detailTab, setDetailTab] = useState<'overview' | 'expenses' | 'members'>('overview');
+  const [memberSearch, setMemberSearch] = useState('');
 
   const locale =
     i18n.language === 'pt-BR'
@@ -223,6 +246,9 @@ export function GroupDetail({
   const formatMoney = (cents: number) => formatCurrencyCents(cents, { locale });
 
   const confirmedIds = useMemo(() => new Set(expenses.map((e) => e.id)), [expenses]);
+
+  /** Sem despesas contabilísticas confirmadas: mostrar onboarding em vez de saldo “vazio”. */
+  const showFinancialOnboarding = !expensesLoading && expenses.length === 0;
 
   const draftExpensesAll = useMemo(
     () => allExpenses.filter((e) => !confirmedIds.has(e.id)),
@@ -275,14 +301,9 @@ export function GroupDetail({
     [confirmedVisibleFlat, t],
   );
 
-  const eligibleAccountingExpenses = useMemo(
-    () => expenses.filter(isAccountingEligibleExpense),
-    [expenses],
-  );
-
   const pairwiseRows = useMemo(
-    () => computePairwiseNetVsMe(currentUserId, members, eligibleAccountingExpenses),
-    [currentUserId, members, eligibleAccountingExpenses],
+    () => computePairwiseNetVsMe(currentUserId, members, expenses),
+    [currentUserId, members, expenses],
   );
 
   const youOweThem = useMemo(
@@ -294,6 +315,22 @@ export function GroupDetail({
     () => pairwiseRows.filter((r) => r.netIOCents < 0).sort((a, b) => a.netIOCents - b.netIOCents),
     [pairwiseRows],
   );
+
+  const pairwiseByUserId = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const row of pairwiseRows) {
+      m.set(row.member.user_id, row.netIOCents);
+    }
+    return m;
+  }, [pairwiseRows]);
+
+  const filteredMembers = useMemo(() => {
+    const q = memberSearch.trim().toLowerCase();
+    const list = [...members];
+    list.sort((a, b) => memberLabel(a).localeCompare(memberLabel(b)));
+    if (!q) return list;
+    return list.filter((m) => memberLabel(m).toLowerCase().includes(q));
+  }, [members, memberSearch]);
 
   const toReceiveCents = Math.max(0, yourBalanceCents);
   const toPayCents = Math.max(0, -yourBalanceCents);
@@ -345,6 +382,11 @@ export function GroupDetail({
     setConfirmedLimit(PAGE_CHUNK);
     setDraftLimit(PAGE_CHUNK);
   }, [filterEventId, filterMemberId, statusFilter, group.id]);
+
+  useEffect(() => {
+    setDetailTab('overview');
+    setMemberSearch('');
+  }, [group.id]);
 
   const handleSettleUp = async () => {
     await onSettleUp();
@@ -581,7 +623,9 @@ export function GroupDetail({
               onClick={onOpenAddExpense}
               disabled={!canAddExpense}
               title={addExpenseDisabledHint}
-              className="w-full py-3.5 text-base font-bold shadow-lg shadow-blue-900/15 sm:w-auto sm:min-w-[220px]"
+              className={`w-full py-3.5 text-base font-bold shadow-lg shadow-blue-900/15 sm:w-auto sm:min-w-[220px] ${
+                highlightAddExpenseCta ? 'ring-2 ring-blue-400 ring-offset-2 animate-pulse' : ''
+              }`}
             >
               <Plus className="mr-2 h-5 w-5" />
               {t('groupDetail.addExpense')}
@@ -660,6 +704,81 @@ export function GroupDetail({
             </div>
           )}
 
+          {showOnboardingNextExpenseBanner && (
+            <div className="mb-4 flex items-start justify-between gap-3 rounded-2xl border border-blue-200 bg-blue-50 p-4 text-sm text-blue-900">
+              <span>{t('groupDetail.onboardingNextExpenseBanner')}</span>
+              {onDismissOnboardingNextExpenseBanner && (
+                <button
+                  type="button"
+                  className="shrink-0 font-semibold underline underline-offset-2 opacity-80 hover:opacity-100"
+                  onClick={onDismissOnboardingNextExpenseBanner}
+                >
+                  {t('groupDetail.dismissNotice')}
+                </button>
+              )}
+            </div>
+          )}
+
+          {showFirstExpenseSuccessBanner && (
+            <div className="mb-4 flex items-start justify-between gap-3 rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-900">
+              <span>{t('groupDetail.firstExpenseSuccessBanner')}</span>
+              {onDismissFirstExpenseSuccessBanner && (
+                <button
+                  type="button"
+                  className="shrink-0 font-semibold underline underline-offset-2 opacity-80 hover:opacity-100"
+                  onClick={onDismissFirstExpenseSuccessBanner}
+                >
+                  {t('groupDetail.dismissNotice')}
+                </button>
+              )}
+            </div>
+          )}
+
+          {members.length === 1 && expenses.length > 0 && !showFinancialOnboarding && (
+            <div className="mb-4 flex flex-col gap-3 rounded-2xl border border-violet-200 bg-violet-50/90 p-4 text-sm text-violet-950 sm:flex-row sm:items-center sm:justify-between">
+              <span className="leading-relaxed">{t('groupDetail.soloMemberInviteNudge')}</span>
+              <Button type="button" variant="primary" size="sm" className="shrink-0" onClick={onInvite}>
+                <UserPlus className="mr-2 h-4 w-4" />
+                {t('groupDetail.invite')}
+              </Button>
+            </div>
+          )}
+
+          <div className="mb-6 flex gap-1 overflow-x-auto rounded-2xl border border-slate-100 bg-slate-50/90 p-1 shadow-sm sm:gap-2">
+            {(
+              [
+                { id: 'overview' as const, icon: LayoutGrid, label: t('groupDetail.tabOverview') },
+                { id: 'expenses' as const, icon: Wallet, label: t('groupDetail.tabExpenses') },
+                { id: 'members' as const, icon: Users, label: t('groupDetail.tabMembers') },
+              ] as const
+            ).map((tab) => (
+              <button
+                key={tab.id}
+                type="button"
+                onClick={() => setDetailTab(tab.id)}
+                className={`flex min-w-0 flex-1 items-center justify-center gap-2 rounded-xl px-3 py-2.5 text-sm font-bold transition-colors sm:flex-initial sm:px-4 ${
+                  detailTab === tab.id
+                    ? 'bg-white text-blue-700 shadow-sm ring-1 ring-slate-200/80'
+                    : 'text-slate-500 hover:bg-white/60 hover:text-slate-800'
+                }`}
+              >
+                <tab.icon className="h-4 w-4 shrink-0 opacity-90" aria-hidden />
+                <span className="truncate">{tab.label}</span>
+              </button>
+            ))}
+          </div>
+
+          {detailTab === 'overview' && showFinancialOnboarding && (
+            <GroupOnboardingHero
+              hasDrafts={draftExpensesAll.length > 0}
+              onAddExpense={onOpenAddExpense}
+              onInvite={onInvite}
+              onCreateEvent={onOpenCreateEvent}
+            />
+          )}
+
+          {detailTab === 'overview' && !showFinancialOnboarding && (
+            <>
           <section className="mb-8 rounded-3xl border border-slate-200/90 bg-gradient-to-br from-slate-50 via-white to-slate-50/80 p-5 shadow-sm ring-1 ring-slate-100 sm:p-6">
             <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">{t('groupDetail.netPositionLabel')}</p>
             <p
@@ -702,11 +821,14 @@ export function GroupDetail({
                   yourBalanceCents > 0
                     ? 'border-emerald-900/15 bg-emerald-700 text-white shadow-emerald-950/25 ring-emerald-800/20 hover:bg-emerald-800'
                     : 'border-red-900/15 bg-red-700 text-white shadow-red-950/20 ring-red-800/25 hover:bg-red-800'
-                }`}
+                } ${showSettlementHint ? 'ring-offset-2 animate-pulse' : ''}`}
               >
                 <Scale className="mr-2 h-5 w-5 shrink-0" />
                 {yourBalanceCents > 0 ? t('groupDetail.ctaRequestPayments') : t('groupDetail.ctaSettleDebts')}
               </Button>
+            )}
+            {showSettlementHint && (
+              <p className="mt-2 text-xs text-emerald-800/90">{t('groupDetail.onboardingSettlementHint')}</p>
             )}
             <div className="relative mt-3">
               <button
@@ -737,7 +859,9 @@ export function GroupDetail({
             </div>
           </section>
 
-          <section className="mb-8">
+          <section
+            className={`mb-8 ${showFirstExpenseSuccessBanner && pairwiseRows.length > 0 ? 'rounded-2xl p-1 ring-2 ring-blue-400/35 ring-offset-2' : ''}`}
+          >
             <h3 className="mb-4 text-base font-bold tracking-tight text-slate-900">{t('groupDetail.whoOwesWhoHeading')}</h3>
             {requestFeedback && (
               <div
@@ -893,9 +1017,25 @@ export function GroupDetail({
             )}
           </section>
 
+            </>
+          )}
+
+          {detailTab === 'expenses' && (
+            <>
           {expensesLoading ? (
             <div className="flex items-center justify-center py-16 text-slate-400">
               <Loader2 className="mr-2 h-8 w-8 animate-spin" />
+            </div>
+          ) : allExpenses.length === 0 ? (
+            <div className="py-16 text-center">
+              <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-slate-100">
+                <Receipt className="h-7 w-7 text-slate-400" />
+              </div>
+              <h3 className="text-lg font-bold text-slate-900">{t('groupDetail.noExpenses')}</h3>
+              <p className="mx-auto mt-2 max-w-sm text-sm text-slate-500">{t('groupDetail.noExpensesDescription')}</p>
+              <Button className="mt-5" onClick={onOpenAddExpense} disabled={!canAddExpense} title={addExpenseDisabledHint}>
+                {t('groupDetail.addFirstExpense')}
+              </Button>
             </div>
           ) : (
             <div className="space-y-6">
@@ -996,19 +1136,88 @@ export function GroupDetail({
                 </div>
               )}
 
-              {!showDraftBlock && !showConfirmedBlock && allExpenses.length === 0 && (
-                <div className="rounded-3xl border-2 border-dashed border-slate-100 py-16 text-center">
-                  <Receipt className="mx-auto mb-3 h-12 w-12 text-slate-200" />
-                  <p className="font-medium text-slate-400">{t('groupDetail.noExpenses')}</p>
-                  <Button className="mt-4" onClick={onOpenAddExpense} disabled={!canAddExpense} title={addExpenseDisabledHint}>
-                    {t('groupDetail.addFirstExpense')}
-                  </Button>
-                </div>
-              )}
               {!showDraftBlock && !showConfirmedBlock && allExpenses.length > 0 && (
                 <p className="py-10 text-center text-sm text-slate-500">{t('groupDetail.noMatchingExpenses')}</p>
               )}
             </div>
+          )}
+            </>
+          )}
+
+          {detailTab === 'members' && (
+            <section className="mb-8 space-y-4">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <h3 className="text-lg font-bold text-slate-900">{t('groupDetail.membersSectionTitle')}</h3>
+                  <p className="mt-1 text-sm text-slate-500">
+                    {t('groupDetail.membersSectionSubtitle', { count: members.length })}
+                  </p>
+                </div>
+                <Button type="button" variant="outline" size="sm" className="shrink-0" onClick={onInvite}>
+                  <UserPlus className="mr-2 h-4 w-4" />
+                  {t('groupDetail.membersInviteCta')}
+                </Button>
+              </div>
+              <div className="relative">
+                <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" aria-hidden />
+                <input
+                  type="search"
+                  value={memberSearch}
+                  onChange={(e) => setMemberSearch(e.target.value)}
+                  placeholder={t('groupDetail.membersSearchPlaceholder')}
+                  className="w-full rounded-xl border border-slate-200 bg-white py-2.5 pl-10 pr-4 text-sm text-slate-800 placeholder:text-slate-400 focus:border-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                  autoComplete="off"
+                />
+              </div>
+              {membersLoading ? (
+                <div className="flex items-center gap-2 py-10 text-sm text-slate-400">
+                  <Loader2 className="h-6 w-6 shrink-0 animate-spin" />
+                  {t('groupDetail.membersLoading')}
+                </div>
+              ) : filteredMembers.length === 0 ? (
+                <p className="py-10 text-center text-sm text-slate-500">{t('groupDetail.membersNoMatch')}</p>
+              ) : (
+                <ul className="max-h-[min(60vh,28rem)] space-y-2 overflow-y-auto rounded-2xl border border-slate-100 bg-slate-50/50 p-2 sm:p-3">
+                  {filteredMembers.map((m) => {
+                    const isYou = m.user_id === currentUserId;
+                    const net = pairwiseByUserId.get(m.user_id);
+                    const roleLabel =
+                      m.role === 'owner' ? t('groupDetail.memberRoleOwner') : t('groupDetail.memberRoleMember');
+                    let statusLabel: string | null = null;
+                    if (isYou) {
+                      statusLabel = t('groupDetail.memberYou');
+                    } else if (net === undefined || net === 0) {
+                      statusLabel = t('groupDetail.memberBalanceEven');
+                    } else if (net > 0) {
+                      statusLabel = t('groupDetail.memberYouOweThem', { amount: formatMoney(net) });
+                    } else {
+                      statusLabel = t('groupDetail.memberTheyOweYou', { amount: formatMoney(Math.abs(net)) });
+                    }
+                    return (
+                      <li
+                        key={m.user_id}
+                        className="flex items-center gap-3 rounded-xl border border-slate-100 bg-white px-3 py-2.5 shadow-sm sm:px-4"
+                      >
+                        <MemberAvatar
+                          userId={m.user_id}
+                          fullName={m.full_name}
+                          avatarUrl={m.avatar_url}
+                          size="md"
+                          className="shrink-0"
+                        />
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate font-semibold text-slate-900">{memberLabel(m)}</p>
+                          <p className="mt-0.5 text-xs text-slate-500">
+                            <span className="font-medium text-slate-600">{roleLabel}</span>
+                            {statusLabel ? <span className="text-slate-400"> · {statusLabel}</span> : null}
+                          </p>
+                        </div>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+            </section>
           )}
         </div>
       </motion.div>

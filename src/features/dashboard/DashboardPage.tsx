@@ -26,15 +26,19 @@ import { useGroups } from '../../hooks/useGroups';
 import { useExpenses } from '../../hooks/useExpenses';
 import { useEvents } from '../../hooks/useEvents';
 import { useGroupMembers } from '../../hooks/useGroupMembers';
+import { useUserProfile } from '../../hooks/useUserProfile';
 import { Card } from '../../components/ui/Card';
 import { Button } from '../../components/ui/Button';
 import { Modal } from '../../components/ui/Modal';
 import { CreateExpenseForm } from '../expenses/components/CreateExpenseForm';
 import { formatCurrencyCents, formatDateOnly } from '../../lib/dateTime';
+import { isAccountingEligibleExpense } from '../../lib/accountingExpenses';
+import { notifyExpensesChanged } from '../../lib/expenseEvents';
 import {
   buildSettlementSuggestionsForUser,
   type SettlementSuggestionRow,
 } from '../../lib/settlementSuggestions';
+import { trackProductEvent } from '../../lib/productTracking';
 
 interface DashboardPageProps {
   session: Session;
@@ -46,7 +50,15 @@ export function DashboardPage({ session }: DashboardPageProps) {
   const { activities } = useDashboardData(session);
   const { groups } = useGroups(session);
   const { expenses } = useExpenses(session);
-  const firstName = session.user.email?.split('@')[0] ?? '';
+  const { profile } = useUserProfile(session.user.id);
+  const metadataFullName =
+    (typeof session.user.user_metadata?.full_name === 'string' ? session.user.user_metadata.full_name : '') ||
+    (typeof session.user.user_metadata?.name === 'string' ? session.user.user_metadata.name : '');
+  const firstName = useMemo(() => {
+    const rawName = (profile?.full_name || metadataFullName || '').trim();
+    if (!rawName) return t('dashboard.someone');
+    return rawName.split(/\s+/)[0];
+  }, [profile?.full_name, metadataFullName, t]);
   const [inviteAppFeedback, setInviteAppFeedback] = useState<string | null>(null);
   const [copiedInviteAppLink, setCopiedInviteAppLink] = useState(false);
   const [inviteCardDismissed, setInviteCardDismissed] = useState(false);
@@ -91,11 +103,16 @@ export function DashboardPage({ session }: DashboardPageProps) {
     [events]
   );
 
+  React.useEffect(() => {
+    if (!selectedEventId) return;
+    const stillOpen = openEvents.some((e) => e.id === selectedEventId);
+    if (!stillOpen) setSelectedEventId('');
+  }, [openEvents, selectedEventId]);
+
   const groupBalances = useMemo(() => {
     const map = new Map<string, number>();
     for (const expense of expenses) {
-      if (expense.status !== 'confirmed') continue;
-      if (expense.event?.status === 'draft') continue;
+      if (!isAccountingEligibleExpense(expense)) continue;
       const current = map.get(expense.group_id) || 0;
       if (expense.paid_by_user_id === session.user.id) {
         let delta = 0;
@@ -121,6 +138,18 @@ export function DashboardPage({ session }: DashboardPageProps) {
     [groupBalances]
   );
   const netBalanceCents = totalToReceiveCents - totalToPayCents;
+
+  React.useEffect(() => {
+    if (groups.length !== 0) return;
+    // Funnel: user reached onboarding empty state on dashboard.
+    void trackProductEvent('onboarding_seen', { once_key: 'onboarding_seen', page: '/dashboard' });
+  }, [groups.length]);
+
+  React.useEffect(() => {
+    if (netBalanceCents === 0) return;
+    // Funnel: first moment user sees a non-zero balance (core value signal).
+    void trackProductEvent('first_balance_seen', { once_key: 'first_balance_seen' });
+  }, [netBalanceCents]);
   const groupsOwingYouCount = useMemo(
     () => Array.from(groupBalances.values()).filter((value) => value > 0).length,
     [groupBalances]
@@ -369,6 +398,7 @@ export function DashboardPage({ session }: DashboardPageProps) {
       }));
       const { error } = await supabase.from('settlements').insert(payload);
       if (error) throw error;
+      notifyExpensesChanged();
       setShowSettleModal(false);
       navigate('/expenses');
     } catch (err: unknown) {
@@ -420,6 +450,31 @@ export function DashboardPage({ session }: DashboardPageProps) {
       window.setTimeout(() => setInviteAppFeedback(null), 4000);
     }
   }, [inviteAppLink, t]);
+
+  if (groups.length === 0) {
+    return (
+      <motion.div
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        exit={{ opacity: 0, y: -20 }}
+        className="space-y-6"
+      >
+        <Card className="p-8 text-center">
+          <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-blue-50 text-blue-600">
+            <Users className="h-7 w-7" />
+          </div>
+          <h2 className="text-2xl font-bold text-slate-900">{t('dashboard.onboardingWelcomeTitle')}</h2>
+          <p className="mx-auto mt-2 max-w-md text-sm text-slate-500">
+            {t('dashboard.onboardingWelcomeDescription')}
+          </p>
+          <Button className="mt-6" onClick={() => navigate('/groups')}>
+            <Plus className="mr-2 h-4 w-4" />
+            {t('dashboard.onboardingWelcomeCta')}
+          </Button>
+        </Card>
+      </motion.div>
+    );
+  }
 
   return (
     <motion.div 
@@ -649,6 +704,8 @@ export function DashboardPage({ session }: DashboardPageProps) {
                     navigate('/groups');
                     return;
                   }
+                  // Funnel: first intent signal for creating first expense from dashboard.
+                  void trackProductEvent('first_expense_started', { once_key: 'first_expense_started' });
                   setSelectedGroupId(defaultGroupId);
                   setAssociateTo('group');
                   setSelectedEventId('');

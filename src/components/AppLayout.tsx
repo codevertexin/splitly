@@ -12,7 +12,6 @@ import {
   Settings as SettingsIcon,
   Bell,
   Calendar,
-  MoreVertical,
   ContactRound,
   ChevronDown,
   CircleHelp,
@@ -24,6 +23,7 @@ import {
 import { Button } from './ui/Button';
 import { MemberAvatar } from './MemberAvatar';
 import { useUserProfile } from '../hooks/useUserProfile';
+import { ProfileNameGate } from './ProfileNameGate';
 import { useNotifications } from '../hooks/useNotifications';
 
 interface AppLayoutProps {
@@ -64,15 +64,13 @@ function formatNotificationDate(value: string, locale: string) {
 
 export function AppLayout({ session }: AppLayoutProps) {
   const { t, i18n } = useTranslation();
-  const { profile } = useUserProfile(session.user.id);
+  const { profile, loading: profileLoading, saving: profileSaving, saveProfileFields } = useUserProfile(session.user.id);
   const location = useLocation();
   const navigate = useNavigate();
-  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const appLogoSrc = '/logo-splitly-app.png';
 
-  const mobileMenuRef = useRef<HTMLDivElement>(null);
   const userMenuRef = useRef<HTMLDivElement>(null);
   const notificationsRef = useRef<HTMLDivElement>(null);
   const { notifications, unreadCount, loading: notificationsLoading, error: notificationsError, markAsRead, markAllAsRead } =
@@ -81,19 +79,17 @@ export function AppLayout({ session }: AppLayoutProps) {
   const activeTab = location.pathname.split('/')[1] || 'dashboard';
 
   useEffect(() => {
-    if (!mobileMenuOpen && !userMenuOpen && !notificationsOpen) return;
+    if (!userMenuOpen && !notificationsOpen) return;
     const handleClickOutside = (e: MouseEvent) => {
       const t = e.target as Node;
-      if (mobileMenuRef.current?.contains(t)) return;
       if (userMenuRef.current?.contains(t)) return;
       if (notificationsRef.current?.contains(t)) return;
-      setMobileMenuOpen(false);
       setUserMenuOpen(false);
       setNotificationsOpen(false);
     };
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, [mobileMenuOpen, userMenuOpen, notificationsOpen]);
+  }, [userMenuOpen, notificationsOpen]);
 
   const handleSignOut = async () => {
     localStorage.removeItem('splitly_last_group_id');
@@ -112,7 +108,6 @@ export function AppLayout({ session }: AppLayoutProps) {
 
   const go = (path: string) => {
     navigate(path);
-    setMobileMenuOpen(false);
     setUserMenuOpen(false);
     setNotificationsOpen(false);
   };
@@ -126,6 +121,12 @@ export function AppLayout({ session }: AppLayoutProps) {
 
   return (
     <div className="min-h-screen bg-[#F8FAFC] flex font-sans">
+      <ProfileNameGate
+        profile={profile}
+        loading={profileLoading}
+        saving={profileSaving}
+        saveProfileFields={saveProfileFields}
+      />
       {/* Desktop sidebar */}
       <aside className="w-64 bg-white border-r border-slate-100 flex-col hidden lg:flex sticky top-0 h-screen shrink-0">
         <div className="p-6 flex-1 flex flex-col min-h-0">
@@ -159,7 +160,7 @@ export function AppLayout({ session }: AppLayoutProps) {
         <div className="mt-auto p-6 space-y-4 border-t border-slate-50">
           <Button onClick={() => navigate('/groups')} variant="outline" className="w-full">
             <Plus className="w-4 h-4 mr-2" />
-            Create a Group
+            {t('layout.createGroup')}
           </Button>
 
           <button
@@ -202,7 +203,7 @@ export function AppLayout({ session }: AppLayoutProps) {
         <div className="mt-auto flex flex-col items-center gap-2 pt-2 border-t border-slate-50 w-full px-1.5 pb-2">
           <button
             type="button"
-            title="Create a Group"
+            title={t('layout.createGroup')}
             onClick={() => navigate('/groups')}
             className="w-11 h-11 flex items-center justify-center rounded-xl text-slate-500 hover:bg-slate-50 hover:text-blue-600 transition-all"
           >
@@ -239,7 +240,6 @@ export function AppLayout({ session }: AppLayoutProps) {
                 onClick={() => {
                   setNotificationsOpen((o) => !o);
                   setUserMenuOpen(false);
-                  setMobileMenuOpen(false);
                 }}
                 className="p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-50 rounded-xl transition-all relative"
                 aria-label={t('layout.notifications')}
@@ -362,41 +362,6 @@ export function AppLayout({ session }: AppLayoutProps) {
               )}
             </div>
 
-            <div ref={mobileMenuRef} className="relative md:hidden">
-              <button
-                type="button"
-                onClick={() => setMobileMenuOpen((o) => !o)}
-                className="p-2 text-slate-500 hover:bg-slate-50 rounded-xl transition-all"
-                aria-expanded={mobileMenuOpen}
-                aria-label={t('layout.menu')}
-              >
-                <MoreVertical className="w-5 h-5" />
-              </button>
-              {mobileMenuOpen && (
-                <div className="absolute right-0 top-full mt-1 w-52 py-1 bg-white rounded-xl border border-slate-100 shadow-lg z-50">
-                  <button
-                    type="button"
-                    onClick={() => go('/groups')}
-                    className="w-full flex items-center gap-2 px-3 py-2.5 text-sm font-medium text-slate-700 hover:bg-slate-50 text-left"
-                  >
-                    <Plus className="w-4 h-4" />
-                    {t('layout.createGroup')}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setMobileMenuOpen(false);
-                      void handleSignOut();
-                    }}
-                    className="w-full flex items-center gap-2 px-3 py-2.5 text-sm font-medium text-red-600 hover:bg-red-50 text-left"
-                  >
-                    <LogOut className="w-4 h-4" />
-                    {t('layout.signOut')}
-                  </button>
-                </div>
-              )}
-            </div>
-
             <div ref={userMenuRef} className="relative">
               <button
                 type="button"
@@ -475,7 +440,7 @@ export function AppLayout({ session }: AppLayoutProps) {
         </div>
 
         <footer className="mt-auto px-4 pb-[calc(5rem+env(safe-area-inset-bottom))] pt-2 sm:px-6 md:pb-8 lg:px-8 text-center text-slate-400 text-xs">
-          Logged in as{' '}
+          {t('layout.loggedInAs')}{' '}
           <span className="text-slate-600 font-medium break-all">{session.user.email}</span>
         </footer>
 

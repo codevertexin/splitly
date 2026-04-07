@@ -1,6 +1,7 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { Session } from '@supabase/supabase-js';
 import { supabase } from '../lib/supabase';
+import { EXPENSES_CHANGED_EVENT, notifyExpensesChanged } from '../lib/expenseEvents';
 import { Expense } from '../types';
 
 export type ExpenseListRow = Expense & {
@@ -15,16 +16,20 @@ export function useExpenses(session: Session) {
   const [error, setError] = useState<string | null>(null);
   const [actionLoading, setActionLoading] = useState(false);
   const fetchingRef = useRef(false);
+  /** If another change fires while a fetch is in flight, run one more fetch after it completes (avoids stale list). */
+  const pendingRefetchRef = useRef(false);
 
-  const fetchExpenses = async () => {
-    if (fetchingRef.current) return;
-    
+  const fetchExpenses = useCallback(async () => {
+    if (fetchingRef.current) {
+      pendingRefetchRef.current = true;
+      return;
+    }
+
     try {
       fetchingRef.current = true;
       setLoading(true);
       setError(null);
-      
-      // Fetch expenses for groups the user is a member of
+
       const { data: memberData, error: memberError } = await supabase
         .from('group_members')
         .select('group_id')
@@ -33,7 +38,7 @@ export function useExpenses(session: Session) {
       if (memberError) throw memberError;
 
       if (memberData && memberData.length > 0) {
-        const groupIds = memberData.map(m => m.group_id);
+        const groupIds = memberData.map((m) => m.group_id);
         const { data, error: expensesError } = await supabase
           .from('expenses')
           .select('*, profiles!expenses_paid_by_user_id_fkey(*), event:events(id, title, status), splits:expense_splits(user_id, share_cents, percentage)')
@@ -58,12 +63,24 @@ export function useExpenses(session: Session) {
     } finally {
       setLoading(false);
       fetchingRef.current = false;
+      if (pendingRefetchRef.current) {
+        pendingRefetchRef.current = false;
+        void fetchExpenses();
+      }
     }
-  };
+  }, [session.user.id]);
 
   useEffect(() => {
-    fetchExpenses();
-  }, []);
+    void fetchExpenses();
+  }, [fetchExpenses]);
+
+  useEffect(() => {
+    const onChanged = () => {
+      void fetchExpenses();
+    };
+    window.addEventListener(EXPENSES_CHANGED_EVENT, onChanged);
+    return () => window.removeEventListener(EXPENSES_CHANGED_EVENT, onChanged);
+  }, [fetchExpenses]);
 
   const updateExpense = async (
     expenseId: string,
@@ -108,6 +125,7 @@ export function useExpenses(session: Session) {
       }
 
       await fetchExpenses();
+      notifyExpensesChanged();
       return { success: true as const };
     } catch (err: any) {
       return { success: false as const, error: err.message || 'Failed to update expense' };

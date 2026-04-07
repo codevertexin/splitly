@@ -17,10 +17,14 @@ import { PeopleDetailPage } from './features/people/PeopleDetailPage';
 import { HelpPage } from './pages/HelpPage';
 import { Session } from '@supabase/supabase-js';
 import { Loader2, AlertCircle, ExternalLink } from 'lucide-react';
-import { InvitePage } from './features/groups/InvitePage';
+import { InviteEntryPage } from './features/groups/InviteEntryPage';
 import { BrandLogo } from './components/BrandLogo';
 import { AppInviteRefCapture } from './components/AppInviteRefCapture';
 import { clearStoredAppInviteRef, getStoredAppInviteRef } from './lib/appInviteRef';
+import {
+  clearPendingGroupInviteToken,
+  getPendingGroupInviteToken,
+} from './lib/groupInviteToken';
 
 export default function App() {
   const { t } = useTranslation();
@@ -87,6 +91,17 @@ export default function App() {
     };
   }, [session?.user?.id]);
 
+  useEffect(() => {
+    if (!session?.user?.id) return;
+    const token = getPendingGroupInviteToken();
+    if (!token) return;
+    clearPendingGroupInviteToken();
+    const targetPath = `/invite/${encodeURIComponent(token)}`;
+    if (window.location.pathname !== targetPath) {
+      window.location.replace(targetPath);
+    }
+  }, [session?.user?.id]);
+
   if (loading) {
     return (
       <div className="flex items-center justify-center min-h-screen bg-white">
@@ -139,7 +154,7 @@ export default function App() {
       <AppInviteRefCapture />
       <div className="min-h-screen bg-slate-50 font-sans text-slate-900">
         <Routes>
-          <Route path="/invite/:token" element={session ? <div className="p-8"><InvitePage /></div> : <Auth />} />
+          <Route path="/invite/:token" element={<InviteEntryPage session={session} />} />
           {!session ? (
             <Route path="*" element={<Auth />} />
           ) : (

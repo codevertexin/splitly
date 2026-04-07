@@ -27,7 +27,7 @@ export function validateUsernameOrEmpty(username: string | null): true | 'USERNA
 async function uploadAvatarFile(
   userId: string,
   file: File
-): Promise<{ url: string } | { error: string }> {
+): Promise<{ url: string; path: string } | { error: string }> {
   if (!isSupabaseConfigured || !supabase) return { error: 'NOT_CONFIGURED' };
 
   const allowed = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
@@ -42,6 +42,7 @@ async function uploadAvatarFile(
         : file.type === 'image/gif'
           ? 'gif'
           : 'jpg';
+  /** Must stay under `auth.uid()` first folder segment — see storage policy `avatars_authenticated_insert_own`. */
   const path = `${userId}/${Date.now()}.${ext}`;
 
   const { error: upError } = await supabase.storage.from('avatars').upload(path, file, {
@@ -53,7 +54,7 @@ async function uploadAvatarFile(
   if (upError) return { error: upError.message };
 
   const { data } = supabase.storage.from('avatars').getPublicUrl(path);
-  return { url: data.publicUrl };
+  return { url: data.publicUrl, path };
 }
 
 export type ProfileSaveFields = {
@@ -68,6 +69,9 @@ export type ProfileSaveFields = {
 export type ProfileSaveResult =
   | { success: true }
   | { success: false; error: string; code?: string };
+
+/** Failure payload; use when TS does not narrow `ProfileSaveResult` after `if (result.success)`. */
+export type ProfileSaveFailure = Extract<ProfileSaveResult, { success: false }>;
 
 export function useUserProfile(userId: string | undefined) {
   const [profile, setProfile] = useState<Profile | null>(null);
@@ -116,24 +120,26 @@ export function useUserProfile(userId: string | undefined) {
 
   const saveProfileFields = useCallback(
     async (fields: ProfileSaveFields): Promise<ProfileSaveResult> => {
-      if (!userId) return { success: false, error: 'NO_USER' };
-      if (!isSupabaseConfigured || !supabase) return { success: false, error: 'NOT_CONFIGURED' };
+      if (!userId) return { success: false as const, error: 'NO_USER' };
+      if (!isSupabaseConfigured || !supabase) return { success: false as const, error: 'NOT_CONFIGURED' };
 
       const normalizedUser = normalizeUsernameInput(fields.username);
       const v = validateUsernameOrEmpty(normalizedUser);
-      if (v !== true) return { success: false, error: v, code: 'USERNAME_INVALID' };
+      if (v !== true) return { success: false as const, error: v, code: 'USERNAME_INVALID' as const };
 
       setSaving(true);
       setError(null);
+      let uploadedStoragePath: string | null = null;
       try {
         let finalAvatarUrl = fields.avatar_url;
 
         if (fields.avatarFile) {
           const up = await uploadAvatarFile(userId, fields.avatarFile);
           if ('error' in up) {
-            return { success: false, error: up.error, code: 'AVATAR_UPLOAD_FAILED' };
+            return { success: false as const, error: up.error, code: 'AVATAR_UPLOAD_FAILED' as const };
           }
           finalAvatarUrl = up.url;
+          uploadedStoragePath = up.path;
         }
 
         const { error: uError } = await supabase
@@ -149,21 +155,30 @@ export function useUserProfile(userId: string | undefined) {
           .eq('id', userId);
 
         if (uError) {
+          if (uploadedStoragePath) {
+            await supabase.storage.from('avatars').remove([uploadedStoragePath]);
+          }
           const code = (uError as { code?: string }).code;
           const msg = uError.message || 'Save failed';
           if (code === '23505' || msg.toLowerCase().includes('unique')) {
-            return { success: false, error: msg, code: 'USERNAME_TAKEN' };
+            return { success: false as const, error: msg, code: 'USERNAME_TAKEN' as const };
           }
           throw uError;
         }
 
+        // Row now points at uploaded file — do not delete this path in a generic catch below.
+        uploadedStoragePath = null;
+
         await fetchProfile();
         notifyProfileUpdated();
-        return { success: true };
+        return { success: true as const };
       } catch (err: unknown) {
+        if (uploadedStoragePath && supabase) {
+          await supabase.storage.from('avatars').remove([uploadedStoragePath]);
+        }
         const msg = err instanceof Error ? err.message : 'Save failed';
         setError(msg);
-        return { success: false, error: msg };
+        return { success: false as const, error: msg };
       } finally {
         setSaving(false);
       }
