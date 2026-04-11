@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { Session } from '@supabase/supabase-js';
@@ -27,9 +27,34 @@ import {
   suggestSettlementAwareEqualSplit,
 } from '../../lib/settlementSplit';
 import { buildSettlementSuggestionsForUser } from '../../lib/settlementSuggestions';
-import { notifyExpensesChanged } from '../../lib/expenseEvents';
+import {
+  notifyExpensesChanged,
+  EXPENSES_CHANGED_EVENT,
+  expensesChangedAffectsGroup,
+} from '../../lib/expenseEvents';
 import { getOnboardingState, updateOnboardingState } from '../../lib/onboardingState';
 import { trackProductEvent } from '../../lib/productTracking';
+import {
+  buildExpenseReceiptObjectPath,
+  removeExpenseReceiptObject,
+  uploadExpenseReceiptObject,
+} from '../../lib/expenseReceiptStorage';
+import { useExpenseReceiptSignedUrl } from '../../hooks/useExpenseReceiptSignedUrl';
+import { ExpenseReceiptSection } from '../expenses/components/ExpenseReceiptSection';
+import {
+  PRODUCT_EVENT_BILLING_SCAN_RECEIPT_CLICK,
+  SCAN_RECEIPT_FEATURE_KEY,
+  useBillingGuard,
+} from '../billing';
+
+type GroupSettlementRow = {
+  id: string;
+  group_id: string;
+  from_user_id: string;
+  to_user_id: string;
+  amount_cents: number;
+  settled_at: string;
+};
 
 interface GroupDetailPageProps {
   session: Session;
@@ -117,6 +142,15 @@ export function GroupDetailPage({ session }: GroupDetailPageProps) {
   const [editPercentageShares, setEditPercentageShares] = useState<Record<string, string>>({});
   const [editError, setEditError] = useState<string | null>(null);
   const [editStatus, setEditStatus] = useState<'draft' | 'confirmed'>('confirmed');
+  const editReceiptAttachmentInputRef = useRef<HTMLInputElement>(null);
+  const editReceiptPreviewObjectUrlRef = useRef<string | null>(null);
+  const [editReceiptFile, setEditReceiptFile] = useState<File | null>(null);
+  const [editReceiptPreviewUrl, setEditReceiptPreviewUrl] = useState<string | null>(null);
+  const [editReceiptRemoved, setEditReceiptRemoved] = useState(false);
+  const billing = useBillingGuard();
+  const [settlements, setSettlements] = useState<GroupSettlementRow[]>([]);
+  const [settlementsLoading, setSettlementsLoading] = useState(false);
+  const [settlementsError, setSettlementsError] = useState<string | null>(null);
   const onboardingState = getOnboardingState();
   const showSettlementHint = onboardingState.hasCreatedExpense && myBalanceCents > 0 && !onboardingState.hasSeenSettlementHint;
   const editAmountCentsPreview = Math.round((parseFloat(editAmount.replace(',', '.')) || 0) * 100);
@@ -157,6 +191,72 @@ export function GroupDetailPage({ session }: GroupDetailPageProps) {
   }, 0);
   const editPercentageDelta = 100 - editPercentageTotal;
 
+  const revokeEditReceiptPreview = useCallback(() => {
+    if (editReceiptPreviewObjectUrlRef.current) {
+      URL.revokeObjectURL(editReceiptPreviewObjectUrlRef.current);
+      editReceiptPreviewObjectUrlRef.current = null;
+    }
+    setEditReceiptPreviewUrl(null);
+  }, []);
+
+  const applyEditReceiptFile = useCallback(
+    (file: File | null) => {
+      revokeEditReceiptPreview();
+      setEditReceiptFile(file);
+      setEditReceiptRemoved(false);
+      if (file) {
+        const url = URL.createObjectURL(file);
+        editReceiptPreviewObjectUrlRef.current = url;
+        setEditReceiptPreviewUrl(url);
+      }
+    },
+    [revokeEditReceiptPreview],
+  );
+
+  const handleEditReceiptAttachmentChange = useCallback(
+    (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      e.target.value = '';
+      if (!file) return;
+      applyEditReceiptFile(file);
+    },
+    [applyEditReceiptFile],
+  );
+
+  const handleEditRemoveReceipt = useCallback(() => {
+    if (editReceiptFile) {
+      applyEditReceiptFile(null);
+      return;
+    }
+    setEditReceiptRemoved(true);
+  }, [editReceiptFile, applyEditReceiptFile]);
+
+  const handleEditOcrInterestClick = useCallback(() => {
+    void trackProductEvent(PRODUCT_EVENT_BILLING_SCAN_RECEIPT_CLICK, {
+      metadata: {
+        featureKey: SCAN_RECEIPT_FEATURE_KEY,
+        source: 'group',
+        subscription_tier: billing.tier,
+        feature_unreleased: true,
+      },
+    });
+    void billing.guardAndRun(SCAN_RECEIPT_FEATURE_KEY, () => {}, {
+      interestSource: 'group',
+    });
+  }, [billing.guardAndRun, billing.tier]);
+
+  const storedReceiptPathForPreview =
+    editingExpense?.receipt_path && !editReceiptRemoved ? editingExpense.receipt_path : null;
+  const storedReceiptSignedUrl = useExpenseReceiptSignedUrl(storedReceiptPathForPreview);
+
+  useEffect(() => {
+    return () => {
+      if (editReceiptPreviewObjectUrlRef.current) {
+        URL.revokeObjectURL(editReceiptPreviewObjectUrlRef.current);
+      }
+    };
+  }, []);
+
   useEffect(() => {
     setGroup(null);
     setRequestedUserIds(new Set());
@@ -182,18 +282,95 @@ export function GroupDetailPage({ session }: GroupDetailPageProps) {
   const [settleLoading, setSettleLoading] = useState(false);
   const [settleFeedback, setSettleFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
-  const groupSettlementSuggestions = useMemo(() => {
-    if (!group) return [];
-    const profileNamesById: Record<string, string> = {};
-    for (const m of members) {
-      profileNamesById[m.user_id] = memberLabel(m);
+  const refetchSettlements = useCallback(async () => {
+    if (!group?.id) {
+      setSettlements([]);
+      setSettlementsError(null);
+      return;
     }
-    return buildSettlementSuggestionsForUser(allExpenses, session.user.id, {
-      groupId: group.id,
-      groupNameById: new Map([[group.id, group.name]]),
-      profileNamesById,
-    });
-  }, [allExpenses, group, members, session.user.id]);
+  
+    setSettlementsLoading(true);
+    setSettlementsError(null);
+  
+    try {
+      const { data, error } = await supabase
+        .from('settlements')
+        .select('id, group_id, from_user_id, to_user_id, amount_cents, settled_at')
+        .eq('group_id', group.id)
+        .order('settled_at', { ascending: false });
+  
+      if (error) throw error;
+  
+      setSettlements((data || []) as GroupSettlementRow[]);
+    } catch (err: unknown) {
+      console.error('Failed to load settlements:', err);
+      setSettlements([]);
+      setSettlementsError(err instanceof Error ? err.message : 'Failed to load settlements');
+    } finally {
+      setSettlementsLoading(false);
+    }
+  }, [group?.id]);
+
+  useEffect(() => {
+    const handler = (event: Event) => {
+      const customEvent = event as CustomEvent<{ groupId?: string | null }>;
+      const changedGroupId = customEvent.detail?.groupId;
+  
+      if (!group?.id) return;
+      if (changedGroupId && changedGroupId !== group.id) return;
+  
+      void Promise.all([
+        refetchBalances(),
+        refetchBalancesZero(),
+        refetchExpenses(),
+        refetchSettlements(),
+      ]);
+    };
+  
+    window.addEventListener('group-settlement-confirmed', handler as EventListener);
+  
+    return () => {
+      window.removeEventListener('group-settlement-confirmed', handler as EventListener);
+    };
+  }, [
+    group?.id,
+    refetchBalances,
+    refetchBalancesZero,
+    refetchExpenses,
+    refetchSettlements,
+  ]);
+
+  useEffect(() => {
+    const onExpensesChanged = (event: Event) => {
+      const detail = (event as CustomEvent<{ groupId?: string | null }>).detail;
+
+      if (!group?.id) return;
+      if (!expensesChangedAffectsGroup(detail, group.id)) return;
+
+      void Promise.all([
+        refetchBalances(),
+        refetchBalancesZero(),
+        refetchExpenses(),
+        refetchSettlements(),
+      ]);
+    };
+
+    window.addEventListener(EXPENSES_CHANGED_EVENT, onExpensesChanged);
+
+    return () => {
+      window.removeEventListener(EXPENSES_CHANGED_EVENT, onExpensesChanged);
+    };
+  }, [
+    group?.id,
+    refetchBalances,
+    refetchBalancesZero,
+    refetchExpenses,
+    refetchSettlements,
+  ]);
+  
+  useEffect(() => {
+    void refetchSettlements();
+  }, [refetchSettlements]);
 
   useEffect(() => {
     if (!settleFeedback) return;
@@ -201,65 +378,65 @@ export function GroupDetailPage({ session }: GroupDetailPageProps) {
     return () => window.clearTimeout(timeout);
   }, [settleFeedback]);
 
-  const handleSettleUp = useCallback(async () => {
-    if (!group) return;
-    if (import.meta.env.DEV) {
-      console.log('[group-settle] start', {
-        groupId: group.id,
-        suggestionCount: groupSettlementSuggestions.length,
-        rows: groupSettlementSuggestions,
-      });
-    }
-    setSettleLoading(true);
-    setSettleFeedback(null);
-    try {
-      const rows = groupSettlementSuggestions.filter((r) => r.amount_cents > 0);
-      if (rows.length === 0) {
-        setSettleFeedback({ type: 'error', message: t('groupDetail.settleNothingToRecord') });
-        return;
+  const handleSettleUp = useCallback(
+    async (targetUserId?: string, amountCents?: number, targetName?: string) => {
+      if (!group) return;
+  
+      setSettleLoading(true);
+      setSettleFeedback(null);
+  
+      try {
+        if (!targetUserId || !amountCents || amountCents <= 0) {
+          setSettleFeedback({
+            type: 'error',
+            message: t('groupDetail.settleNothingToRecord'),
+          });
+          return;
+        }
+  
+        const { data, error } = await supabase.functions.invoke(
+          'create-settlement-confirmation-request',
+          {
+            body: {
+              group_id: group.id,
+              target_user_id: targetUserId,
+              amount_cents: amountCents,
+              currency: 'EUR',
+            },
+          }
+        );
+  
+        if (error) throw error;
+        if (data && typeof data === 'object' && 'error' in data && (data as { error?: string }).error) {
+          throw new Error(String((data as { error: string }).error));
+        }
+  
+        setSettleFeedback({
+          type: 'success',
+          message: targetName
+            ? `Pedido de confirmação enviado a ${targetName}.`
+            : 'Pedido de confirmação enviado.',
+        });
+  
+        notifyExpensesChanged({ groupId: group.id });
+      } catch (e: unknown) {
+        const msg =
+          e instanceof Error ? e.message : 'Não foi possível pedir confirmação do pagamento.';
+  
+        setSettleFeedback({
+          type: 'error',
+          message: msg,
+        });
+  
+        if (import.meta.env.DEV) {
+          console.error('[group-settle] failed', e);
+        }
+      } finally {
+        setSettleLoading(false);
       }
-      const now = new Date().toISOString();
-      const payload = rows.map((row) => ({
-        group_id: row.group_id,
-        event_id: null as string | null,
-        from_user_id: row.from_user_id,
-        to_user_id: row.to_user_id,
-        amount_cents: row.amount_cents,
-        currency: 'EUR',
-        settled_at: now,
-        note: 'Group detail: settle up',
-        created_by: session.user.id,
-      }));
-      if (import.meta.env.DEV) {
-        console.log('[group-settle] insert payload', payload);
-      }
-      const { data: inserted, error } = await supabase.from('settlements').insert(payload).select('id');
-      if (import.meta.env.DEV) {
-        console.log('[group-settle] insert result', { inserted, error });
-      }
-      if (error) throw error;
-      setSettleFeedback({ type: 'success', message: t('groupDetail.settleRecordedSuccess') });
-      await Promise.all([refetchBalances(), refetchExpenses(), refetchBalancesZero()]);
-      notifyExpensesChanged({ groupId: group.id });
-      if (import.meta.env.DEV) {
-        console.log('[group-settle] refetch done');
-      }
-    } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : t('groupDetail.settleRecordedError');
-      setSettleFeedback({ type: 'error', message: msg });
-      if (import.meta.env.DEV) console.error('[group-settle] failed', e);
-    } finally {
-      setSettleLoading(false);
-    }
-  }, [
-    group,
-    groupSettlementSuggestions,
-    refetchBalances,
-    refetchExpenses,
-    refetchBalancesZero,
-    session.user.id,
-    t,
-  ]);
+    },
+    [group, t],
+  );
 
   const handleRequestPayment = useCallback(
     async (targetUserId: string, amountCents: number, targetName: string) => {
@@ -363,9 +540,20 @@ export function GroupDetailPage({ session }: GroupDetailPageProps) {
   };
 
   const canEditExpense = (expense: GroupExpenseRow) =>
-    expense.created_by === session.user.id && (!expense.event || expense.event.status !== 'closed');
+    (
+      expense.created_by === session.user.id ||
+      expense.paid_by_user_id === session.user.id
+    ) &&
+    (!expense.event || expense.event.status !== 'closed');
 
   const openEditExpense = (expense: GroupExpenseRow) => {
+    console.log('[group-edit] canEditExpense?', {
+      expenseId: expense.id,
+      created_by: expense.created_by,
+      paid_by_user_id: expense.paid_by_user_id,
+      currentUserId: session.user.id,
+      eventStatus: expense.event?.status,
+    });
     if (!canEditExpense(expense)) return;
     setEditingExpense(expense);
     setEditTitle(expense.title);
@@ -390,9 +578,14 @@ export function GroupDetailPage({ session }: GroupDetailPageProps) {
     setEditManualShares(manualMap);
     setEditPercentageShares(pctMap);
     setEditError(null);
+    applyEditReceiptFile(null);
+    setEditReceiptRemoved(false);
   };
 
   const closeEditExpense = () => {
+    revokeEditReceiptPreview();
+    setEditReceiptFile(null);
+    setEditReceiptRemoved(false);
     setEditingExpense(null);
     setEditSettleAwareEnabled(false);
     setEditError(null);
@@ -411,6 +604,10 @@ export function GroupDetailPage({ session }: GroupDetailPageProps) {
     void trackProductEvent('first_settlement_hint_seen', { once_key: 'first_settlement_hint_seen' });
     updateOnboardingState({ hasSeenSettlementHint: true });
   }, [showSettlementHint]);
+
+  useEffect(() => {
+    void refetchSettlements();
+  }, [refetchSettlements]);
 
   useEffect(() => {
     if (!group?.id || members.length === 0) {
@@ -499,7 +696,21 @@ export function GroupDetailPage({ session }: GroupDetailPageProps) {
       }
     }
 
-    const result = await updateExpense(editingExpense.id, {
+    let receipt_path: string | null | undefined = undefined;
+    if (editReceiptFile) {
+      const path = buildExpenseReceiptObjectPath(editingExpense.group_id, editingExpense.id, editReceiptFile);
+      const up = await uploadExpenseReceiptObject(supabase, path, editReceiptFile);
+      if (up.error) {
+        setEditError(t('expenseForm.receiptUploadFailed'));
+        return;
+      }
+      receipt_path = path;
+    } else if (editReceiptRemoved && editingExpense.receipt_path) {
+      receipt_path = null;
+    }
+
+    console.log('[group-edit] submit payload', {
+      expenseId: editingExpense.id,
       title: trimmedTitle,
       amount_cents: amountCents,
       description: editDescription.trim() ? editDescription.trim() : null,
@@ -508,9 +719,33 @@ export function GroupDetailPage({ session }: GroupDetailPageProps) {
       participant_ids: editParticipantIds,
       splits,
       status: editStatus,
+      receipt_path,
     });
 
+    const updatePayload: Parameters<typeof updateExpense>[1] = {
+      title: trimmedTitle,
+      amount_cents: amountCents,
+      description: editDescription.trim() ? editDescription.trim() : null,
+      split_method:
+        editSplitMethod === 'equal' && editSettleAwareEnabled && editSettleAwareAvailable ? 'manual' : editSplitMethod,
+      participant_ids: editParticipantIds,
+      splits,
+      status: editStatus,
+    };
+    if (receipt_path !== undefined) {
+      updatePayload.receipt_path = receipt_path;
+    }
+
+    const result = await updateExpense(editingExpense.id, updatePayload);
+
     if (result.success) {
+      const prevPath = editingExpense.receipt_path;
+      if (receipt_path && prevPath && prevPath !== receipt_path) {
+        await removeExpenseReceiptObject(supabase, prevPath);
+      }
+      if (receipt_path === null && prevPath) {
+        await removeExpenseReceiptObject(supabase, prevPath);
+      }
       closeEditExpense();
       void refetchBalances();
       void refetchBalancesZero();
@@ -574,6 +809,7 @@ export function GroupDetailPage({ session }: GroupDetailPageProps) {
         membersLoading={membersLoading}
         expenses={expenses}
         allExpenses={allExpenses}
+        settlements={settlements}
         expensesLoading={expensesLoading}
         yourBalanceCents={myBalanceCents}
         balanceLoading={balanceLoading}
@@ -669,6 +905,17 @@ export function GroupDetailPage({ session }: GroupDetailPageProps) {
             value={editDescription}
             onChange={(e) => setEditDescription(e.target.value)}
             placeholder={t('expenseForm.descriptionPlaceholder')}
+          />
+          <ExpenseReceiptSection
+            attachmentInputRef={editReceiptAttachmentInputRef}
+            receiptFile={editReceiptFile}
+            receiptPreviewUrl={editReceiptPreviewUrl}
+            storedReceiptPreviewUrl={storedReceiptSignedUrl}
+            onAttachmentInputChange={handleEditReceiptAttachmentChange}
+            onRemoveReceipt={handleEditRemoveReceipt}
+            onOcrInterestClick={handleEditOcrInterestClick}
+            disablePhoto={expenseActionLoading}
+            disableOcr={expenseActionLoading}
           />
           <div className="space-y-1">
             <label className="block text-sm font-semibold text-slate-700">{t('groupExpense.expenseStatusLabel')}</label>

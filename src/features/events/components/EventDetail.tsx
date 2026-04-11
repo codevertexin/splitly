@@ -27,7 +27,7 @@ import { supabase } from '../../../lib/supabase';
 import { formatEventDateLabel } from '../datePresentation';
 import { formatCurrencyCents, formatDateOnly, formatFixedInput } from '../../../lib/dateTime';
 import { iconForExpenseTitle } from '../../expenses/expenseSuggestions';
-import { filterAccountingEligibleExpenses } from '../../../lib/accountingExpenses';
+import { filterAccountingEligibleExpenses, isAccountingEligibleExpense } from '../../../lib/accountingExpenses';
 import { notifyExpensesChanged } from '../../../lib/expenseEvents';
 
 interface EventDetailProps {
@@ -45,6 +45,9 @@ interface EventDetailProps {
   }) => Promise<{ success: boolean; error?: string }>;
   onCloseEvent: () => Promise<{ success: boolean; error?: string }>;
   onFinalizeEvent: () => Promise<{ success: boolean; error?: string }>;
+  onSetParticipantStatus: (
+    status: 'going' | 'not_going',
+  ) => Promise<{ success: boolean; error?: string }>;
   actionLoading: boolean;
   participantError?: string | null;
   session: Session;
@@ -138,7 +141,19 @@ function groupExpensesByDay(
   });
 }
 
-export function EventDetail({ event, onBack, onAddParticipant, onRefresh, onUpdateEvent, onCloseEvent, onFinalizeEvent, actionLoading, participantError, session }: EventDetailProps) {
+export function EventDetail({
+  event,
+  onBack,
+  onAddParticipant,
+  onRefresh,
+  onUpdateEvent,
+  onCloseEvent,
+  onFinalizeEvent,
+  onSetParticipantStatus,
+  actionLoading,
+  participantError,
+  session,
+}: EventDetailProps) {
   const { t, i18n } = useTranslation();
   const draftSectionRef = useRef<HTMLDivElement | null>(null);
   const [showAddExpense, setShowAddExpense] = useState(false);
@@ -163,6 +178,8 @@ export function EventDetail({ event, onBack, onAddParticipant, onRefresh, onUpda
   const [confirmParticipantIds, setConfirmParticipantIds] = useState<string[]>([]);
   const [confirmLoading, setConfirmLoading] = useState(false);
   const [editError, setEditError] = useState<string | null>(null);
+  const [rsvpBusy, setRsvpBusy] = useState(false);
+  const [rsvpError, setRsvpError] = useState<string | null>(null);
 
   const daysRemaining = useMemo(() => {
     if (!event.ends_at) return null;
@@ -173,6 +190,10 @@ export function EventDetail({ event, onBack, onAddParticipant, onRefresh, onUpda
   }, [event.ends_at]);
 
   const participantIds = useMemo(() => new Set(event.participants.map((p) => p.user_id)), [event.participants]);
+  const myParticipation = useMemo(
+    () => event.participants.find((p) => p.user_id === session.user.id),
+    [event.participants, session.user.id],
+  );
   const availableMembers = event.group.members.filter((m) => !participantIds.has(m.user_id));
   const expenseParticipants = useMemo(() => {
     if (event.participants.length > 0) {
@@ -212,7 +233,7 @@ export function EventDetail({ event, onBack, onAddParticipant, onRefresh, onUpda
   const confirmedExpenses = useMemo(
     () =>
       event.expenses
-        .filter((expense) => expense.status === 'confirmed')
+      .filter((expense) => isAccountingEligibleExpense(expense))
         .sort((a, b) => new Date(b.incurred_at).getTime() - new Date(a.incurred_at).getTime()),
     [event.expenses],
   );
@@ -453,6 +474,16 @@ export function EventDetail({ event, onBack, onAddParticipant, onRefresh, onUpda
     return t('eventDetail.participantStatusNotGoing');
   };
 
+  const handleRsvp = async (status: 'going' | 'not_going') => {
+    setRsvpBusy(true);
+    setRsvpError(null);
+    const result = await onSetParticipantStatus(status);
+    setRsvpBusy(false);
+    if (!result.success) {
+      setRsvpError(result.error || t('eventDetail.rsvpError'));
+    }
+  };
+
   const toReceiveEvent = Math.max(0, yourNetInEventCents);
   const toPayEvent = Math.max(0, -yourNetInEventCents);
 
@@ -580,7 +611,7 @@ export function EventDetail({ event, onBack, onAddParticipant, onRefresh, onUpda
             size="sm"
             className="font-semibold"
             onClick={() => setShowAddParticipant(true)}
-            disabled={event.status === 'closed'}
+            disabled={event.status === 'closed' || !canEditEvent}
           >
             <UserPlus className="mr-1.5 h-4 w-4" />
             {t('eventDetail.quickInvite')}
@@ -612,6 +643,47 @@ export function EventDetail({ event, onBack, onAddParticipant, onRefresh, onUpda
           </Button>
         </div>
       </div>
+
+      {myParticipation &&
+        event.status !== 'closed' &&
+        (myParticipation.status === 'pending' || myParticipation.status === 'not_going') && (
+          <div
+            className={`rounded-2xl border p-4 sm:p-5 ${
+              myParticipation.status === 'pending'
+                ? 'border-sky-200 bg-sky-50/90'
+                : 'border-amber-200 bg-amber-50/80'
+            }`}
+          >
+            <p className="text-base font-bold text-slate-900">{t('eventDetail.rsvpBannerTitle')}</p>
+            <p className="mt-1.5 text-sm text-slate-700">{t('eventDetail.rsvpBannerBody')}</p>
+            {myParticipation.status === 'not_going' && (
+              <p className="mt-2 text-sm text-amber-900/90">{t('eventDetail.rsvpNotGoingHint')}</p>
+            )}
+            {rsvpError && <p className="mt-2 text-sm text-red-700">{rsvpError}</p>}
+            <div className="mt-4 flex flex-wrap gap-2">
+              <Button
+                type="button"
+                variant="primary"
+                size="sm"
+                loading={rsvpBusy}
+                onClick={() => void handleRsvp('going')}
+              >
+                {t('eventDetail.rsvpGoing')}
+              </Button>
+              {myParticipation.status === 'pending' && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={rsvpBusy}
+                  onClick={() => void handleRsvp('not_going')}
+                >
+                  {t('eventDetail.rsvpNotGoing')}
+                </Button>
+              )}
+            </div>
+          </div>
+        )}
 
       {event.description?.trim() ? (
         <section className="rounded-3xl border border-slate-200/90 bg-white p-5 shadow-sm ring-1 ring-slate-100 sm:p-6">
@@ -711,7 +783,7 @@ export function EventDetail({ event, onBack, onAddParticipant, onRefresh, onUpda
               <Users className="mx-auto mb-2 h-10 w-10 text-slate-300" />
               <p className="text-sm font-medium text-slate-700">{t('eventDetail.participantsEmpty')}</p>
               <p className="mt-1 text-xs text-slate-500">{t('eventDetail.participantsEmptyHint')}</p>
-              {event.status !== 'closed' && (
+              {event.status !== 'closed' && canEditEvent && (
                 <Button
                   type="button"
                   size="sm"
@@ -743,27 +815,28 @@ export function EventDetail({ event, onBack, onAddParticipant, onRefresh, onUpda
                     </Badge>
                   </div>
                 </div>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  className="shrink-0 text-red-600 hover:bg-red-50 hover:text-red-700"
-                  disabled={participant.user_id === event.created_by || event.status === 'closed'}
-                  onClick={() => {
-                    if (participant.user_id === event.created_by) return;
-                    const hasDraftWithParticipant = draftExpenses.some((expense) =>
-                      (expense.splits || []).some((s) => s.user_id === participant.user_id),
-                    );
-                    setRemovingParticipantId(participant.user_id);
-                    if (hasDraftWithParticipant) {
-                      setShowRemoveParticipantConfirm(true);
-                    } else {
-                      void handleRemoveParticipantChoice(false);
-                    }
-                  }}
-                >
-                  {t('eventDetail.removeParticipant')}
-                </Button>
+                {canEditEvent && participant.user_id !== event.created_by && (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="shrink-0 text-red-600 hover:bg-red-50 hover:text-red-700"
+                    disabled={event.status === 'closed'}
+                    onClick={() => {
+                      const hasDraftWithParticipant = draftExpenses.some((expense) =>
+                        (expense.splits || []).some((s) => s.user_id === participant.user_id),
+                      );
+                      setRemovingParticipantId(participant.user_id);
+                      if (hasDraftWithParticipant) {
+                        setShowRemoveParticipantConfirm(true);
+                      } else {
+                        void handleRemoveParticipantChoice(false);
+                      }
+                    }}
+                  >
+                    {t('eventDetail.removeParticipant')}
+                  </Button>
+                )}
               </div>
             ))
           )}
@@ -904,6 +977,7 @@ export function EventDetail({ event, onBack, onAddParticipant, onRefresh, onUpda
           eventId={event.id}
           initialStatus="draft"
           participants={expenseParticipants}
+          scanReceiptInterestSource="event"
           session={session}
           onSuccess={async () => {
             setShowAddExpense(false);

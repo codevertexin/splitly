@@ -1,6 +1,5 @@
-import React, { useCallback, useMemo, useState } from 'react';
-import { Plus, AlertCircle, Receipt } from 'lucide-react';
-import { motion } from 'motion/react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { AlertCircle, Receipt } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { Input } from '../../../components/ui/Input';
 import { Button } from '../../../components/ui/Button';
@@ -21,6 +20,19 @@ import {
 } from '../../../lib/settlementSplit';
 import { getOnboardingState, updateOnboardingState } from '../../../lib/onboardingState';
 import { trackProductEvent } from '../../../lib/productTracking';
+import { buildExpenseV2Payload } from '../../../lib/expenseV2Payload';
+import { persistReceiptAfterExpenseCreate } from '../../../lib/expenseReceiptStorage';
+import { ExpenseReceiptSection } from './ExpenseReceiptSection';
+import { ExpenseDictationMicButton } from './ExpenseDictationMicButton';
+import { getSpeechRecognitionLanguage, useSpeechToText } from '../../../hooks/useSpeechToText';
+import {
+  clearPendingResumeFeatureAfterCheckout,
+  PRODUCT_EVENT_BILLING_SCAN_RECEIPT_CLICK,
+  readPendingResumeFeatureAfterCheckout,
+  registerPremiumResumeHandler,
+  SCAN_RECEIPT_FEATURE_KEY,
+  useBillingGuard,
+} from '../../billing';
 
 interface CreateExpenseFormProps {
   groupId: string;
@@ -35,6 +47,8 @@ interface CreateExpenseFormProps {
   onSuccess: () => void;
   onCancel: () => void;
   session: any;
+  /** Product analytics: where the scan-receipt / interest entry point was used. */
+  scanReceiptInterestSource?: 'dashboard' | 'event' | 'group' | 'unknown';
 }
 
 export function CreateExpenseForm({
@@ -50,6 +64,7 @@ export function CreateExpenseForm({
   onSuccess,
   onCancel,
   session,
+  scanReceiptInterestSource = 'unknown',
 }: CreateExpenseFormProps) {
   runSettlementAwareSelfChecks();
   const { t, i18n } = useTranslation();
@@ -66,6 +81,125 @@ export function CreateExpenseForm({
   const [error, setError] = useState<string | null>(null);
   const [expenseStatus, setExpenseStatus] = useState<'draft' | 'confirmed'>(initialStatus);
   const onboardingState = getOnboardingState();
+  const receiptAttachmentInputRef = useRef<HTMLInputElement>(null);
+  const receiptPreviewObjectUrlRef = useRef<string | null>(null);
+  const [receiptFile, setReceiptFile] = useState<File | null>(null);
+  const [receiptPreviewUrl, setReceiptPreviewUrl] = useState<string | null>(null);
+  const billing = useBillingGuard();
+  const userId = session?.user?.id;
+
+  const speech = useSpeechToText();
+  const speechLang = useMemo(() => getSpeechRecognitionLanguage(i18n.language), [i18n.language]);
+  const [dictationField, setDictationField] = useState<'title' | 'description' | null>(null);
+
+  useEffect(() => {
+    if (!speech.isListening) setDictationField(null);
+  }, [speech.isListening]);
+
+  const appendDictated = useCallback((current: string, chunk: string) => {
+    const t = chunk.trim();
+    if (!t) return current;
+    const p = current.trim();
+    return p ? `${p} ${t}` : t;
+  }, []);
+
+  const toggleTitleDictation = useCallback(() => {
+    if (!speech.isSupported) return;
+    if (speech.isListening && dictationField === 'title') {
+      speech.stopListening();
+      return;
+    }
+    setDictationField('title');
+    speech.startListening((text) => {
+      setTitle((prev) => appendDictated(prev, text));
+    }, speechLang);
+  }, [speech, dictationField, speechLang, appendDictated]);
+
+  const toggleDescriptionDictation = useCallback(() => {
+    if (!speech.isSupported) return;
+    if (speech.isListening && dictationField === 'description') {
+      speech.stopListening();
+      return;
+    }
+    setDictationField('description');
+    speech.startListening((text) => {
+      setDescription((prev) => appendDictated(prev, text));
+    }, speechLang);
+  }, [speech, dictationField, speechLang, appendDictated]);
+
+  const revokeReceiptPreview = useCallback(() => {
+    if (receiptPreviewObjectUrlRef.current) {
+      URL.revokeObjectURL(receiptPreviewObjectUrlRef.current);
+      receiptPreviewObjectUrlRef.current = null;
+    }
+    setReceiptPreviewUrl(null);
+  }, []);
+
+  const applyReceiptFile = useCallback(
+    (file: File | null) => {
+      revokeReceiptPreview();
+      setReceiptFile(file);
+      if (file) {
+        const url = URL.createObjectURL(file);
+        receiptPreviewObjectUrlRef.current = url;
+        setReceiptPreviewUrl(url);
+      }
+      if (import.meta.env.DEV && file) {
+        // eslint-disable-next-line no-console
+        console.debug('[receipt attachment] selected', file.name);
+      }
+    },
+    [revokeReceiptPreview],
+  );
+
+  const handleReceiptAttachmentChange = useCallback(
+    (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      e.target.value = '';
+      if (!file) return;
+      applyReceiptFile(file);
+    },
+    [applyReceiptFile],
+  );
+
+  const handleRemoveReceipt = useCallback(() => {
+    applyReceiptFile(null);
+  }, [applyReceiptFile]);
+
+  React.useEffect(
+    () => () => {
+      if (receiptPreviewObjectUrlRef.current) {
+        URL.revokeObjectURL(receiptPreviewObjectUrlRef.current);
+      }
+    },
+    [],
+  );
+
+  /** OCR / waitlist: billing guard only — never opens the attachment file picker. */
+  const handleOcrInterestClick = useCallback(() => {
+    void trackProductEvent(PRODUCT_EVENT_BILLING_SCAN_RECEIPT_CLICK, {
+      metadata: {
+        featureKey: SCAN_RECEIPT_FEATURE_KEY,
+        source: scanReceiptInterestSource,
+        subscription_tier: billing.tier,
+        feature_unreleased: true,
+      },
+    });
+    void billing.guardAndRun(SCAN_RECEIPT_FEATURE_KEY, () => {}, {
+      interestSource: scanReceiptInterestSource,
+    });
+  }, [billing.guardAndRun, billing.tier, scanReceiptInterestSource]);
+
+  React.useEffect(() => {
+    return registerPremiumResumeHandler(SCAN_RECEIPT_FEATURE_KEY, () => {});
+  }, []);
+
+  React.useEffect(() => {
+    const pending = readPendingResumeFeatureAfterCheckout();
+    if (pending === SCAN_RECEIPT_FEATURE_KEY) {
+      clearPendingResumeFeatureAfterCheckout();
+    }
+  }, []);
 
   React.useEffect(() => {
     setTitle(initialTitle);
@@ -76,12 +210,12 @@ export function CreateExpenseForm({
   }, [initialStatus]);
 
   React.useEffect(() => {
-    if (!participants.length) return;
+    if (!userId || !participants.length) return;
     setParticipantIds(participants.map((p) => p.user_id));
-  }, [participants, session.user.id]);
+  }, [participants, userId]);
 
   const loadDebtsToCurrentUser = useCallback(async () => {
-    if (!groupId || !session?.user?.id || participants.length === 0) {
+    if (!groupId || !userId || participants.length === 0) {
       setDebtsToCurrentUser({});
       return;
     }
@@ -101,11 +235,11 @@ export function CreateExpenseForm({
     setDebtsToCurrentUser(
       computeDebtsToCurrentUser({
         members: participants,
-        currentUserId: session.user.id,
+        currentUserId: userId,
         eligibleExpenses: eligible,
       }),
     );
-  }, [groupId, participants, session.user.id]);
+  }, [groupId, participants, userId]);
 
   React.useEffect(() => {
     void loadDebtsToCurrentUser();
@@ -134,22 +268,22 @@ export function CreateExpenseForm({
     () => canApplySettlementAwareEqualSplit({
       splitMethod: 'equal',
       participantIds,
-      payerId: session.user.id,
+      payerId: userId ?? '',
       debtsToPayer: debtsToCurrentUser,
     }),
-    [participantIds, session.user.id, debtsToCurrentUser],
+    [participantIds, userId, debtsToCurrentUser],
   );
   const settlementSuggestion = useMemo(
     () =>
       suggestSettlementAwareEqualSplit({
         amountCents: amountCentsPreview,
         participantIds,
-        payerId: session.user.id,
+        payerId: userId ?? '',
         debtsToPayer: debtsToCurrentUser,
         enabled: settleAwareEnabled,
         splitMethod,
       }),
-    [amountCentsPreview, participantIds, session.user.id, debtsToCurrentUser, settleAwareEnabled, splitMethod],
+    [amountCentsPreview, participantIds, userId, debtsToCurrentUser, settleAwareEnabled, splitMethod],
   );
   const manualTotal = participantIds.reduce((sum, id) => {
     const cents = Math.round(parseFloat((manualShares[id] ?? '').replace(',', '.')) * 100);
@@ -166,15 +300,22 @@ export function CreateExpenseForm({
     e.preventDefault();
     setError(null);
     setLoading(true);
-
+  
     try {
+      if (!userId || !session?.access_token) {
+        throw new Error(t('expenseForm.createFailed'));
+      }
+
       let createdExpenseId: string | null = null;
+      let effectiveSplitMethod: 'equal' | 'manual' | 'percentage' = splitMethod;
+  
       const euros = parseFloat(amount.replace(',', '.'));
       const amountCents = Math.round(euros * 100);
+  
       if (Number.isNaN(euros) || amountCents <= 0) {
         throw new Error(t('expenseForm.invalidAmount'));
       }
-
+  
       try {
         await assertEventAllowsNewExpense(supabase, groupId, eventId);
       } catch (guardErr: unknown) {
@@ -184,38 +325,51 @@ export function CreateExpenseForm({
         if (code === 'EVENT_GROUP_MISMATCH') throw new Error(t('expenseForm.eventGroupMismatch'));
         throw guardErr instanceof Error ? guardErr : new Error(t('expenseForm.createFailed'));
       }
-
+  
       if (participants.length) {
         if (participantIds.length === 0) {
           throw new Error(t('groupExpense.noParticipants'));
         }
-        let splits: Array<{ user_id: string; share_cents: number }> | undefined = undefined;
-        let effectiveSplitMethod: 'equal' | 'manual' | 'percentage' = splitMethod;
+  
+        let splits:
+          | Array<{
+              user_id: string;
+              share_cents: number;
+              percentage?: number;
+            }>
+          | undefined = undefined;
+  
         if (splitMethod === 'manual') {
           const parsed = participantIds.map((id) => ({
             user_id: id,
             share_cents: Math.round(parseFloat((manualShares[id] ?? '').replace(',', '.')) * 100),
           }));
+  
           if (parsed.some((row) => Number.isNaN(row.share_cents) || row.share_cents < 0)) {
             throw new Error(t('groupExpense.invalidManualSplit'));
           }
+  
           const totalManual = parsed.reduce((sum, row) => sum + row.share_cents, 0);
           if (totalManual !== amountCents) {
             throw new Error(t('groupExpense.manualSplitTotalMismatch'));
           }
+  
           splits = parsed;
         } else if (splitMethod === 'percentage') {
           const parsed = participantIds.map((id) => ({
             user_id: id,
             percentage: parseFloat((percentageShares[id] ?? '').replace(',', '.')),
           }));
+  
           if (parsed.some((row) => Number.isNaN(row.percentage) || row.percentage < 0)) {
             throw new Error(t('groupExpense.invalidPercentageSplit'));
           }
+  
           const totalPct = parsed.reduce((sum, row) => sum + row.percentage, 0);
           if (Math.abs(totalPct - 100) > 0.01) {
             throw new Error(t('groupExpense.percentageSplitTotalMismatch'));
           }
+  
           let allocated = 0;
           splits = parsed.map((row, index) => {
             if (index === parsed.length - 1) {
@@ -225,8 +379,10 @@ export function CreateExpenseForm({
                 share_cents: amountCents - allocated,
               };
             }
+  
             const share = Math.round(amountCents * (row.percentage / 100));
             allocated += share;
+  
             return {
               user_id: row.user_id,
               percentage: row.percentage,
@@ -237,13 +393,14 @@ export function CreateExpenseForm({
           const settleSubmit = getSettlementAwareManualSubmitSplits({
             amountCents,
             participantIds,
-            payerId: session.user.id,
+            payerId: userId,
             debtsToPayer: debtsToCurrentUser,
             settleAwareEnabled,
             splitMethod,
           });
+  
           if (import.meta.env.DEV && settleAwareEnabled) {
-            console.log('[create-expense][settlement-aware]', {
+            console.log('[create-expense-v2][settlement-aware]', {
               amountCents,
               baseShares: settleSubmit.suggestion.baseShares,
               adjustedShares: settleSubmit.suggestion.adjustedShares,
@@ -251,43 +408,66 @@ export function CreateExpenseForm({
               reason: settleSubmit.suggestion.reason,
             });
           }
+  
           if (settleSubmit.splits) {
             splits = settleSubmit.splits;
             effectiveSplitMethod = settleSubmit.effectiveSplitMethod;
           }
         }
-
-        const createBody = {
-          group_id: groupId,
-          event_id: eventId || null,
+  
+        const manualSharesPayload =
+          effectiveSplitMethod === 'manual' && splits
+            ? splits.map((s) => ({
+                userId: s.user_id,
+                amountCents: s.share_cents,
+              }))
+            : [];
+  
+        const percentageSharesPayload =
+          effectiveSplitMethod === 'percentage' && splits
+            ? splits.map((s) => ({
+                userId: s.user_id,
+                percentage: s.percentage ?? 0,
+              }))
+            : [];
+  
+        const requestedSplitMethod =
+          splitMethod === 'equal' && settleAwareEnabled && splits
+            ? 'settlement_aware'
+            : effectiveSplitMethod;
+  
+        const createBody = buildExpenseV2Payload({
+          groupId,
+          eventId: eventId ?? null,
           title,
           description,
-          amount_cents: amountCents,
           currency: 'EUR',
-          paid_by_user_id: session.user.id,
-          participant_ids: participantIds,
-          split_method: effectiveSplitMethod,
-          splits,
+          amountCents,
+          paidByUserId: userId,
+          participantIds,
+          splitMethod: requestedSplitMethod,
           status: expenseStatus,
-        };
-        if (import.meta.env.DEV && splitMethod === 'equal' && settleAwareEnabled) {
-          console.log('[create-expense] payload', createBody);
+          manualShares: manualSharesPayload,
+          percentageShares: percentageSharesPayload,
+        });
+  
+        if (import.meta.env.DEV) {
+          console.log('[create-expense-v2] payload', createBody);
         }
-
-        const { data, error: fnError } = await supabase.functions.invoke('create-expense', {
+  
+        const { data, error: fnError } = await supabase.functions.invoke('create-expense-v2', {
           body: createBody,
           headers: {
-            Authorization: `Bearer ${session.access_token}`,
+            Authorization: `Bearer ${session.access_token!}`,
           },
         });
-        if (import.meta.env.DEV) {
-          console.log('[create-expense] response', data);
-        }
+  
         if (fnError) throw fnError;
-        if (data?.error) throw new Error(data.error);
-
+        if ((data as any)?.error) throw new Error((data as any).error);
+  
         const created = data as { expense?: { id: string }; split_method?: string } | undefined;
         createdExpenseId = created?.expense?.id ?? null;
+  
         if (
           import.meta.env.DEV &&
           created?.expense?.id &&
@@ -299,6 +479,7 @@ export function CreateExpenseForm({
             .select('split_method, splits:expense_splits(user_id, share_cents)')
             .eq('id', created.expense.id)
             .single();
+  
           if (!persistErr && persistedRow) {
             const persistedMap = Object.fromEntries(
               (persistedRow.splits as Array<{ user_id: string; share_cents: number }>).map((s) => [
@@ -306,13 +487,18 @@ export function CreateExpenseForm({
                 s.share_cents,
               ]),
             );
+  
             const expectedMap = Object.fromEntries(splits.map((s) => [s.user_id, s.share_cents]));
             const keys = new Set([...Object.keys(persistedMap), ...Object.keys(expectedMap)]);
+  
             let match = persistedRow.split_method === 'manual';
             for (const k of keys) {
-              if ((persistedMap[k] ?? -1) !== (expectedMap[k] ?? -2)) match = false;
+              if ((persistedMap[k] ?? -1) !== (expectedMap[k] ?? -2)) {
+                match = false;
+              }
             }
-            console.log('[create-expense] persisted vs preview splits', {
+  
+            console.log('[create-expense-v2] persisted vs preview splits', {
               split_method: persistedRow.split_method,
               persistedMap,
               expectedMap,
@@ -321,7 +507,7 @@ export function CreateExpenseForm({
           }
         }
       } else {
-        const { error: insertError } = await supabase
+        const { data: inserted, error: insertError } = await supabase
           .from('expenses')
           .insert({
             title,
@@ -329,18 +515,37 @@ export function CreateExpenseForm({
             description,
             group_id: groupId,
             event_id: eventId || null,
-            paid_by_user_id: session.user.id,
-            created_by: session.user.id,
+            paid_by_user_id: userId,
+            created_by: userId,
             currency: 'EUR',
             split_method: 'equal',
             status: expenseStatus,
-          });
+          })
+          .select('id')
+          .single();
+  
         if (insertError) throw insertError;
+        createdExpenseId = inserted?.id ?? null;
       }
-
+  
       notifyExpensesChanged({ groupId });
+
+      if (receiptFile && createdExpenseId) {
+        const receiptResult = await persistReceiptAfterExpenseCreate({
+          supabase,
+          accessToken: session.access_token,
+          groupId,
+          expenseId: createdExpenseId,
+          file: receiptFile,
+        });
+        if (receiptResult.error) {
+          setError(t('expenseForm.receiptUploadFailed'));
+          setLoading(false);
+          return;
+        }
+      }
+  
       if (!onboardingState.hasCreatedExpense) {
-        // Funnel: user completed their first expense creation.
         void trackProductEvent('first_expense_created', {
           once_key: 'first_expense_created',
           entity_type: 'expense',
@@ -348,14 +553,19 @@ export function CreateExpenseForm({
         });
         updateOnboardingState({ hasCreatedExpense: true });
       }
+  
       if (settleAwareEnabled) {
-        // Funnel: settle-aware split was applied to a saved expense.
         void trackProductEvent('smart_settlement_applied', {
           entity_type: 'expense',
           entity_id: createdExpenseId,
-          metadata: { split_method: effectiveSplitMethod, suggestionApplied: settlementSuggestion.applied },
+          metadata: {
+            split_method: effectiveSplitMethod,
+            suggestionApplied: settlementSuggestion.applied,
+          },
         });
       }
+  
+      applyReceiptFile(null);
       onSuccess();
     } catch (err: any) {
       setError(err.message || t('expenseForm.createFailed'));
@@ -364,7 +574,21 @@ export function CreateExpenseForm({
     }
   };
 
+  if (!userId) {
+    return (
+      <div className="space-y-3">
+        <div className="rounded-xl border border-amber-100 bg-amber-50 px-4 py-3 text-sm text-amber-950">
+          {t('expenseForm.sessionRequired')}
+        </div>
+        <Button type="button" variant="secondary" onClick={onCancel} className="w-full">
+          {t('common.cancel')}
+        </Button>
+      </div>
+    );
+  }
+
   return (
+    <>
     <form onSubmit={handleSubmit} className="space-y-4">
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <div>
@@ -374,6 +598,22 @@ export function CreateExpenseForm({
             value={title}
             onChange={(e) => setTitle(e.target.value)}
             placeholder={t('expenseForm.titlePlaceholder')}
+            helperText={
+              dictationField === 'title' && speech.isListening ? t('expenseForm.dictationListening') : undefined
+            }
+            suffix={
+              speech.isSupported ? (
+                <ExpenseDictationMicButton
+                  isListening={dictationField === 'title' && speech.isListening}
+                  onClick={toggleTitleDictation}
+                  disabled={loading}
+                  labels={{
+                    start: t('expenseForm.dictationStart'),
+                    stop: t('expenseForm.dictationStop'),
+                  }}
+                />
+              ) : undefined
+            }
           />
           {matchedSuggestion && (
             <p className="mt-2 text-xs text-slate-500">
@@ -394,13 +634,48 @@ export function CreateExpenseForm({
           placeholder="0.00"
         />
       </div>
+
+      <ExpenseReceiptSection
+        attachmentInputRef={receiptAttachmentInputRef}
+        receiptFile={receiptFile}
+        receiptPreviewUrl={receiptPreviewUrl}
+        onAttachmentInputChange={handleReceiptAttachmentChange}
+        onRemoveReceipt={handleRemoveReceipt}
+        onOcrInterestClick={handleOcrInterestClick}
+        disablePhoto={loading}
+        disableOcr={loading}
+      />
       
       <Input
         label={t('expenseForm.descriptionLabel')}
         value={description}
         onChange={(e) => setDescription(e.target.value)}
         placeholder={t('expenseForm.descriptionPlaceholder')}
+        helperText={
+          dictationField === 'description' && speech.isListening
+            ? t('expenseForm.dictationListening')
+            : undefined
+        }
+        suffix={
+          speech.isSupported ? (
+            <ExpenseDictationMicButton
+              isListening={dictationField === 'description' && speech.isListening}
+              onClick={toggleDescriptionDictation}
+              disabled={loading}
+              labels={{
+                start: t('expenseForm.dictationStart'),
+                stop: t('expenseForm.dictationStop'),
+              }}
+            />
+          ) : undefined
+        }
       />
+
+      {speech.error && (
+        <p className="text-xs text-amber-900 bg-amber-50 border border-amber-100 rounded-xl px-3 py-2">
+          {t('expenseForm.dictationError')}
+        </p>
+      )}
 
       <div className="space-y-1">
         <label className="block text-sm font-semibold text-slate-700">{t('groupExpense.expenseStatusLabel')}</label>
@@ -701,5 +976,6 @@ export function CreateExpenseForm({
         </p>
       )}
     </form>
+    </>
   );
 }

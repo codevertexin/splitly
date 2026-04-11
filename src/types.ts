@@ -202,6 +202,13 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
+            foreignKeyName: "expense_splits_expense_id_fkey"
+            columns: ["expense_id"]
+            isOneToOne: false
+            referencedRelation: "v_financial_expenses_eligible"
+            referencedColumns: ["id"]
+          },
+          {
             foreignKeyName: "expense_splits_user_id_fkey"
             columns: ["user_id"]
             isOneToOne: false
@@ -212,53 +219,71 @@ export type Database = {
       }
       expenses: {
         Row: {
+          affects_balances: boolean
           amount_cents: number
+          balance_impact_summary: Json
+          calculation_trace: Json
           created_at: string
           created_by: string
           currency: string
           deleted_at: string | null
           description: string | null
           event_id: string | null
+          finance_engine_version: string
           group_id: string
           id: string
           incurred_at: string
           paid_by_user_id: string
-          status: Database["public"]["Enums"]["expense_status"]
+          receipt_path: string | null
+          requested_split_method: string | null
           split_method: Database["public"]["Enums"]["split_method"]
+          status: Database["public"]["Enums"]["expense_status"]
           title: string
           updated_at: string
         }
         Insert: {
+          affects_balances?: boolean
           amount_cents: number
+          balance_impact_summary?: Json
+          calculation_trace?: Json
           created_at?: string
           created_by: string
           currency?: string
           deleted_at?: string | null
           description?: string | null
           event_id?: string | null
+          finance_engine_version?: string
           group_id: string
           id?: string
           incurred_at?: string
           paid_by_user_id: string
-          status?: Database["public"]["Enums"]["expense_status"]
+          receipt_path?: string | null
+          requested_split_method?: string | null
           split_method?: Database["public"]["Enums"]["split_method"]
+          status?: Database["public"]["Enums"]["expense_status"]
           title: string
           updated_at?: string
         }
         Update: {
+          affects_balances?: boolean
           amount_cents?: number
+          balance_impact_summary?: Json
+          calculation_trace?: Json
           created_at?: string
           created_by?: string
           currency?: string
           deleted_at?: string | null
           description?: string | null
           event_id?: string | null
+          finance_engine_version?: string
           group_id?: string
           id?: string
           incurred_at?: string
           paid_by_user_id?: string
-          status?: Database["public"]["Enums"]["expense_status"]
+          receipt_path?: string | null
+          requested_split_method?: string | null
           split_method?: Database["public"]["Enums"]["split_method"]
+          status?: Database["public"]["Enums"]["expense_status"]
           title?: string
           updated_at?: string
         }
@@ -430,6 +455,90 @@ export type Database = {
           },
         ]
       }
+      notifications: {
+        Row: {
+          body: string | null
+          created_at: string
+          cta_label: string | null
+          cta_url: string | null
+          data: Json
+          entity_id: string | null
+          entity_type: string | null
+          id: string
+          is_read: boolean
+          read_at: string | null
+          title: string
+          type: string
+          user_id: string
+        }
+        Insert: {
+          body?: string | null
+          created_at?: string
+          cta_label?: string | null
+          cta_url?: string | null
+          data?: Json
+          entity_id?: string | null
+          entity_type?: string | null
+          id?: string
+          is_read?: boolean
+          read_at?: string | null
+          title: string
+          type: string
+          user_id: string
+        }
+        Update: {
+          body?: string | null
+          created_at?: string
+          cta_label?: string | null
+          cta_url?: string | null
+          data?: Json
+          entity_id?: string | null
+          entity_type?: string | null
+          id?: string
+          is_read?: boolean
+          read_at?: string | null
+          title?: string
+          type?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
+      product_events: {
+        Row: {
+          created_at: string
+          entity_id: string | null
+          entity_type: string | null
+          event_name: string
+          id: string
+          metadata: Json
+          page: string | null
+          session_id: string | null
+          user_id: string | null
+        }
+        Insert: {
+          created_at?: string
+          entity_id?: string | null
+          entity_type?: string | null
+          event_name: string
+          id?: string
+          metadata?: Json
+          page?: string | null
+          session_id?: string | null
+          user_id?: string | null
+        }
+        Update: {
+          created_at?: string
+          entity_id?: string | null
+          entity_type?: string | null
+          event_name?: string
+          id?: string
+          metadata?: Json
+          page?: string | null
+          session_id?: string | null
+          user_id?: string | null
+        }
+        Relationships: []
+      }
       profiles: {
         Row: {
           avatar_url: string | null
@@ -437,11 +546,12 @@ export type Database = {
           default_currency: string
           full_name: string | null
           id: string
+          marketing_opt_in: boolean
           onboarding_completed: boolean
-          preferred_language: string | null
-          timezone: string
+          preferred_language: string
+          timezone: string | null
           updated_at: string
-          username: string | null
+          username: string
         }
         Insert: {
           avatar_url?: string | null
@@ -449,11 +559,12 @@ export type Database = {
           default_currency?: string
           full_name?: string | null
           id: string
+          marketing_opt_in?: boolean
           onboarding_completed?: boolean
-          preferred_language?: string | null
-          timezone?: string
+          preferred_language?: string
+          timezone?: string | null
           updated_at?: string
-          username?: string | null
+          username: string
         }
         Update: {
           avatar_url?: string | null
@@ -461,22 +572,25 @@ export type Database = {
           default_currency?: string
           full_name?: string | null
           id?: string
+          marketing_opt_in?: boolean
           onboarding_completed?: boolean
-          preferred_language?: string | null
-          timezone?: string
+          preferred_language?: string
+          timezone?: string | null
           updated_at?: string
-          username?: string | null
+          username?: string
         }
         Relationships: []
       }
       settlements: {
         Row: {
           amount_cents: number
+          calculation_trace: Json
           created_at: string
           created_by: string
           currency: string
           deleted_at: string | null
           event_id: string | null
+          finance_engine_version: string
           from_user_id: string
           group_id: string
           id: string
@@ -486,11 +600,13 @@ export type Database = {
         }
         Insert: {
           amount_cents: number
+          calculation_trace?: Json
           created_at?: string
           created_by: string
           currency?: string
           deleted_at?: string | null
           event_id?: string | null
+          finance_engine_version?: string
           from_user_id: string
           group_id: string
           id?: string
@@ -500,11 +616,13 @@ export type Database = {
         }
         Update: {
           amount_cents?: number
+          calculation_trace?: Json
           created_at?: string
           created_by?: string
           currency?: string
           deleted_at?: string | null
           event_id?: string | null
+          finance_engine_version?: string
           from_user_id?: string
           group_id?: string
           id?: string
@@ -552,33 +670,33 @@ export type Database = {
       }
       user_contacts: {
         Row: {
+          category: Database["public"]["Enums"]["contact_category"]
+          contact_user_id: string
+          created_at: string
           id: string
           owner_user_id: string
-          contact_user_id: string
-          category: Database["public"]["Enums"]["contact_category"]
-          status: Database["public"]["Enums"]["contact_status"]
           source: Database["public"]["Enums"]["contact_source"]
-          created_at: string
+          status: Database["public"]["Enums"]["contact_status"]
           updated_at: string
         }
         Insert: {
+          category?: Database["public"]["Enums"]["contact_category"]
+          contact_user_id: string
+          created_at?: string
           id?: string
           owner_user_id: string
-          contact_user_id: string
-          category?: Database["public"]["Enums"]["contact_category"]
-          status?: Database["public"]["Enums"]["contact_status"]
           source?: Database["public"]["Enums"]["contact_source"]
-          created_at?: string
+          status?: Database["public"]["Enums"]["contact_status"]
           updated_at?: string
         }
         Update: {
+          category?: Database["public"]["Enums"]["contact_category"]
+          contact_user_id?: string
+          created_at?: string
           id?: string
           owner_user_id?: string
-          contact_user_id?: string
-          category?: Database["public"]["Enums"]["contact_category"]
-          status?: Database["public"]["Enums"]["contact_status"]
           source?: Database["public"]["Enums"]["contact_source"]
-          created_at?: string
+          status?: Database["public"]["Enums"]["contact_status"]
           updated_at?: string
         }
         Relationships: [
@@ -623,17 +741,61 @@ export type Database = {
           },
         ]
       }
+      v_financial_expenses_eligible: {
+        Row: {
+          affects_balances: boolean | null
+          amount_cents: number | null
+          created_at: string | null
+          event_id: string | null
+          event_status: Database["public"]["Enums"]["event_status"] | null
+          finance_engine_version: string | null
+          group_id: string | null
+          id: string | null
+          paid_by_user_id: string | null
+          status: Database["public"]["Enums"]["expense_status"] | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "expenses_event_id_fkey"
+            columns: ["event_id"]
+            isOneToOne: false
+            referencedRelation: "events"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "expenses_group_id_fkey"
+            columns: ["group_id"]
+            isOneToOne: false
+            referencedRelation: "groups"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "expenses_paid_by_user_id_fkey"
+            columns: ["paid_by_user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
     }
     Functions: {
+      can_view_profile_safe: {
+        Args: { p_profile_id: string }
+        Returns: boolean
+      }
       is_group_member: { Args: { p_group_id: string }; Returns: boolean }
+      is_group_member_safe: { Args: { p_group_id: string }; Returns: boolean }
       is_group_owner: { Args: { p_group_id: string }; Returns: boolean }
+      is_group_owner_safe: { Args: { p_group_id: string }; Returns: boolean }
+      user_can_access_event: { Args: { p_event_id: string }; Returns: boolean }
     }
     Enums: {
       contact_category: "friend" | "family" | "colleague" | "other"
       contact_source: "manual" | "group_invite" | "app_share"
       contact_status: "active" | "blocked"
-      expense_status: "draft" | "confirmed"
       event_status: "draft" | "open" | "closed"
+      expense_status: "draft" | "confirmed"
       group_role: "owner" | "member"
       invite_status: "pending" | "accepted" | "revoked" | "expired"
       membership_status: "active" | "invited" | "left"
@@ -645,13 +807,6 @@ export type Database = {
     }
   }
 }
-
-export type Group = Database["public"]["Tables"]["groups"]["Row"]
-export type Event = Database["public"]["Tables"]["events"]["Row"]
-export type EventParticipant = Database["public"]["Tables"]["event_participants"]["Row"]
-export type Expense = Database["public"]["Tables"]["expenses"]["Row"]
-export type Profile = Database["public"]["Tables"]["profiles"]["Row"]
-export type UserContact = Database["public"]["Tables"]["user_contacts"]["Row"]
 
 type DatabaseWithoutInternals = Omit<Database, "__InternalSupabase">
 
@@ -773,6 +928,9 @@ export type CompositeTypes<
 export const Constants = {
   public: {
     Enums: {
+      contact_category: ["friend", "family", "colleague", "other"],
+      contact_source: ["manual", "group_invite", "app_share"],
+      contact_status: ["active", "blocked"],
       event_status: ["draft", "open", "closed"],
       expense_status: ["draft", "confirmed"],
       group_role: ["owner", "member"],
@@ -783,3 +941,11 @@ export const Constants = {
     },
   },
 } as const
+
+/** Aliases for common `Tables<'…'>` row types used across the app. */
+export type Group = Tables<'groups'>
+export type Expense = Tables<'expenses'>
+export type Event = Tables<'events'>
+export type Profile = Tables<'profiles'>
+export type EventParticipant = Tables<'event_participants'>
+export type UserContact = Tables<'user_contacts'>

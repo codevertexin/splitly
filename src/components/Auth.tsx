@@ -6,6 +6,8 @@ import { motion } from 'motion/react';
 import { BrandLogo } from './BrandLogo';
 import { getStoredAppInviteRef } from '../lib/appInviteRef';
 import { trackProductEvent } from '../lib/productTracking';
+import { LanguageSwitcherInline } from './LanguageSwitcherInline';
+import { getPendingGroupInviteToken } from '../lib/groupInviteToken';
 
 export function Auth() {
   const { t } = useTranslation();
@@ -17,6 +19,16 @@ export function Auth() {
   const [isSignUp, setIsSignUp] = useState(false);
   const [displayName, setDisplayName] = useState('');
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [username, setUsername] = useState('');
+
+  const redirectToPendingInviteIfAny = () => {
+    const pendingInviteToken = getPendingGroupInviteToken();
+    if (pendingInviteToken) {
+      window.location.href = `/invite/${pendingInviteToken}`;
+      return true;
+    }
+    return false;
+  };
 
   const handleAuth = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -26,41 +38,73 @@ export function Auth() {
     try {
       if (isSignUp) {
         const trimmedName = displayName.trim();
+        const trimmedUsername = username.trim().toLowerCase();
+      
         if (trimmedName.length < 2) {
           setMessage({ type: 'error', text: t('auth.displayNameTooShort') });
           setLoading(false);
           return;
         }
+      
+        if (trimmedUsername.length < 3) {
+          setMessage({ type: 'error', text: t('auth.usernameTooShort') });
+          setLoading(false);
+          return;
+        }
+      
+        if (!/^[a-z0-9._]+$/.test(trimmedUsername)) {
+          setMessage({ type: 'error', text: t('auth.usernameInvalid') });
+          setLoading(false);
+          return;
+        }
+      
         const appInvitedBy = getStoredAppInviteRef();
-        const { data, error } = await supabase.auth.signUp({
-          email,
-          password,
-          options: {
-            data: {
-              full_name: trimmedName,
-              ...(appInvitedBy ? { app_invited_by: appInvitedBy } : {}),
-            },
-          },
-        });
-        if (error) throw error;
-        // Funnel: user successfully completes account creation step.
-        void trackProductEvent('signup_completed', {
-          user_id: data.user?.id ?? null,
-          once_key: 'signup_completed',
-          metadata: { hasAppInviteRef: Boolean(appInvitedBy) },
-        });
-        setMessage({ type: 'success', text: t('auth.confirmEmail') });
+        const currentLanguage = localStorage.getItem('app_lang') || 'en';
+
+const { data, error } = await supabase.auth.signUp({
+  email: email.trim(),
+  password,
+  options: {
+    data: {
+      full_name: trimmedName,
+      username: trimmedUsername,
+      preferred_language: currentLanguage,
+      ...(appInvitedBy ? { app_invited_by: appInvitedBy } : {}),
+    },
+  },
+});
+if (error) throw error;
+
+void trackProductEvent('signup_completed', {
+  user_id: data.user?.id ?? null,
+  once_key: 'signup_completed',
+  metadata: { hasAppInviteRef: Boolean(appInvitedBy) },
+});
+
+setMessage({ type: 'success', text: t('auth.confirmEmail') });
       } else {
         const { data, error } = await supabase.auth.signInWithPassword({ email, password });
         if (error) throw error;
-        // Funnel: user completed login and entered product session.
+      
         void trackProductEvent('login_completed', {
           user_id: data.user?.id ?? null,
           metadata: { method: 'password' },
         });
+      
+        if (redirectToPendingInviteIfAny()) {
+          return;
+        }
       }
     } catch (error: any) {
-      setMessage({ type: 'error', text: error.message });
+      console.error('Auth error:', error);
+
+      const message =
+        error?.message ||
+        error?.error_description ||
+        error?.msg ||
+        t('auth.genericError');
+    
+      setMessage({ type: 'error', text: message });
     } finally {
       setLoading(false);
     }
@@ -80,31 +124,59 @@ export function Auth() {
         </motion.div>
 
         <motion.div
-          initial={{ opacity: 0, y: 16 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.35, delay: 0.05 }}
-          className="w-full p-7 bg-white border border-slate-100 shadow-xl rounded-3xl"
-        >
-          <p className="text-slate-600 text-center text-sm sm:text-base mb-6 leading-relaxed">
-            {isSignUp ? t('auth.taglineSignUp') : t('auth.taglineSignIn')}
-          </p>
+  initial={{ opacity: 0, y: 16 }}
+  animate={{ opacity: 1, y: 0 }}
+  transition={{ duration: 0.35, delay: 0.05 }}
+  className="w-full p-7 bg-white border border-slate-100 shadow-xl rounded-3xl"
+>
+  <div className="mb-6 flex justify-end">
+    <LanguageSwitcherInline />
+  </div>
+
+  <p className="text-slate-600 text-center text-sm sm:text-base mb-6 leading-relaxed">
+    {isSignUp ? t('auth.taglineSignUp') : t('auth.taglineSignIn')}
+  </p>
 
         <form onSubmit={handleAuth} className="space-y-4">
-          {isSignUp && (
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">{t('auth.displayName')}</label>
-              <input
-                type="text"
-                required
-                minLength={2}
-                autoComplete="name"
-                value={displayName}
-                onChange={(e) => setDisplayName(e.target.value)}
-                className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl placeholder:text-slate-400 hover:border-slate-300 focus:bg-white focus:ring-4 focus:ring-blue-500/15 focus:border-blue-500 transition-all outline-none"
-                placeholder={t('auth.displayNamePlaceholder')}
-              />
-            </div>
-          )}
+        {isSignUp && (
+  <>
+    <div>
+      <label className="block text-sm font-medium text-slate-700 mb-1">
+        {t('auth.displayName')}
+      </label>
+      <input
+        type="text"
+        required
+        minLength={2}
+        autoComplete="name"
+        value={displayName}
+        onChange={(e) => setDisplayName(e.target.value)}
+        className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl placeholder:text-slate-400 hover:border-slate-300 focus:bg-white focus:ring-4 focus:ring-blue-500/15 focus:border-blue-500 transition-all outline-none"
+        placeholder={t('auth.displayNamePlaceholder')}
+      />
+    </div>
+
+    <div>
+      <label className="block text-sm font-medium text-slate-700 mb-1">
+        {t('auth.username')}
+      </label>
+      <input
+        type="text"
+        required
+        minLength={3}
+        autoComplete="username"
+        value={username}
+        onChange={(e) =>
+          setUsername(
+            e.target.value.toLowerCase().replace(/[^a-z0-9._]/g, '')
+          )
+        }
+        className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl placeholder:text-slate-400 hover:border-slate-300 focus:bg-white focus:ring-4 focus:ring-blue-500/15 focus:border-blue-500 transition-all outline-none"
+        placeholder={t('auth.usernamePlaceholder')}
+      />
+    </div>
+  </>
+)}
 
           <div>
             <label className="block text-sm font-medium text-slate-700 mb-1">{t('auth.email')}</label>
@@ -190,13 +262,19 @@ export function Auth() {
         </form>
 
         <div className="mt-5 text-center space-y-3">
-          <button
-            type="button"
-            onClick={() => setIsSignUp(!isSignUp)}
-            className="w-full py-3 border border-slate-300 bg-white hover:bg-slate-50 hover:border-slate-400 text-slate-800 font-semibold rounded-xl transition-all"
-          >
-            {isSignUp ? t('auth.signIn') : t('auth.signUp')}
-          </button>
+        <button
+  type="button"
+  onClick={() => {
+    setIsSignUp((prev) => !prev);
+    setMessage(null);
+    setDisplayName('');
+    setUsername('');
+    setPassword('');
+  }}
+  className="w-full py-3 border border-slate-300 bg-white hover:bg-slate-50 hover:border-slate-400 text-slate-800 font-semibold rounded-xl transition-all"
+>
+  {isSignUp ? t('auth.signIn') : t('auth.signUp')}
+</button>
           <div className="inline-flex items-center gap-1.5 text-xs text-slate-500">
             <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
             {t('auth.trustHint')}

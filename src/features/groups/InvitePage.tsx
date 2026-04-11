@@ -6,6 +6,10 @@ import { Loader2, CheckCircle2, AlertCircle, ArrowRight } from 'lucide-react';
 import { motion } from 'motion/react';
 import { Button } from '../../components/ui/Button';
 import { trackProductEvent } from '../../lib/productTracking';
+import {
+  storePendingGroupInviteToken,
+  clearPendingGroupInviteToken,
+} from '../../lib/groupInviteToken';
 
 type AcceptInviteResponse = {
   success?: boolean;
@@ -83,14 +87,23 @@ export function InvitePage() {
         setLoading(false);
         return;
       }
-
+  
+      const { data: authData } = await supabase.auth.getUser();
+      const user = authData.user;
+  
+      if (!user) {
+        storePendingGroupInviteToken(token);
+        navigate('/auth');
+        return;
+      }
+  
       try {
         const { data, error: fnError } = await supabase.functions.invoke('accept-invite', {
           body: { token },
         });
-
+  
         const payload = await resolveAcceptInvitePayload(data, fnError);
-
+  
         if (fnError) {
           const msg =
             payload?.error ||
@@ -99,28 +112,30 @@ export function InvitePage() {
           setLoading(false);
           return;
         }
-
+  
         if (payload?.error && !payload.success) {
           setError(mapInviteError(t, payload.code, payload.error));
           setLoading(false);
           return;
         }
-
+  
         if (!payload?.success || !payload.group_id) {
           setError(t('invite.groupIdMissing'));
           setLoading(false);
           return;
         }
-
+  
+        clearPendingGroupInviteToken();
+  
         setJoinedGroupId(payload.group_id);
         setAlreadyMember(payload.status === 'already_member');
-        // Funnel: invite acceptance converted into group join or confirmed membership.
+  
         void trackProductEvent('invite_accepted', {
           entity_type: 'group',
           entity_id: payload.group_id,
           metadata: { status: payload.status ?? 'joined' },
         });
-
+  
         setTimeout(() => {
           navigate(`/groups/${payload.group_id}`);
         }, 2000);
@@ -131,7 +146,7 @@ export function InvitePage() {
         setLoading(false);
       }
     };
-
+  
     void acceptInvite();
   }, [token, navigate, t]);
 

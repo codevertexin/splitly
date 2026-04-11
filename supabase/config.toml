@@ -471,3 +471,37 @@ entrypoint = "./functions/create-expense-v2/index.ts"
 # Specifies static files to be bundled with the function. Supports glob patterns.
 # For example, if you want to serve static HTML pages in your function:
 # static_files = [ "./functions/create-expense-v2/*.html" ]
+
+[functions.create-settlement-confirmation-request]
+enabled = true
+verify_jwt = true
+import_map = "./functions/create-settlement-confirmation-request/deno.json"
+# Uncomment to specify a custom file path to the entrypoint.
+# Supported file extensions are: .ts, .js, .mjs, .jsx, .tsx
+entrypoint = "./functions/create-settlement-confirmation-request/index.ts"
+# Specifies static files to be bundled with the function. Supports glob patterns.
+# For example, if you want to serve static HTML pages in your function:
+# static_files = [ "./functions/create-settlement-confirmation-request/*.html" ]
+
+[functions.confirm-settlement-request]
+enabled = true
+verify_jwt = true
+import_map = "./functions/confirm-settlement-request/deno.json"
+# Uncomment to specify a custom file path to the entrypoint.
+# Supported file extensions are: .ts, .js, .mjs, .jsx, .tsx
+entrypoint = "./functions/confirm-settlement-request/index.ts"
+# Specifies static files to be bundled with the function. Supports glob patterns.
+# For example, if you want to serve static HTML pages in your function:
+# static_files = [ "./functions/confirm-settlement-request/*.html" ]
+
+[functions.set-expense-receipt-path]
+enabled = true
+verify_jwt = true
+import_map = "./functions/set-expense-receipt-path/deno.json"
+entrypoint = "./functions/set-expense-receipt-path/index.ts"
+
+[functions.update-expense-v2]
+enabled = true
+verify_jwt = true
+import_map = "./functions/update-expense-v2/deno.json"
+entrypoint = "./functions/update-expense-v2/index.ts"

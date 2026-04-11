@@ -17,6 +17,32 @@ export type SettlementSuggestionRow = {
   direction: 'pay' | 'receive';
 };
 
+/** Recorded cash settlements in DB (same shape as dashboard fetch). Used to reduce remaining suggested amounts. */
+export type RecordedSettlementLike = {
+  group_id: string;
+  from_user_id: string;
+  to_user_id: string;
+  amount_cents: number;
+  deleted_at?: string | null;
+};
+
+function flowKey(groupId: string, fromUserId: string, toUserId: string): string {
+  return `${groupId}:${fromUserId}:${toUserId}`;
+}
+
+function sumRecordedSettlementsByFlow(
+  settlements: RecordedSettlementLike[] | undefined,
+): Map<string, number> {
+  const map = new Map<string, number>();
+  if (!settlements?.length) return map;
+  for (const s of settlements) {
+    if (s.deleted_at) continue;
+    const k = flowKey(s.group_id, s.from_user_id, s.to_user_id);
+    map.set(k, (map.get(k) ?? 0) + (s.amount_cents || 0));
+  }
+  return map;
+}
+
 type ExpenseLike = {
   group_id: string;
   status?: string | null;
@@ -36,9 +62,12 @@ export function buildSettlementSuggestionsForUser(
     groupId?: string;
     groupNameById?: Map<string, string>;
     profileNamesById?: Record<string, string>;
+    /** Already-recorded settlements; subtracted per (group, from, to) from implied expense flows. */
+    settlements?: RecordedSettlementLike[];
   },
 ): SettlementSuggestionRow[] {
-  const { groupId, groupNameById, profileNamesById = {} } = options || {};
+  const { groupId, groupNameById, profileNamesById = {}, settlements } = options || {};
+  const recordedByFlow = sumRecordedSettlementsByFlow(settlements);
   const pairMap = new Map<string, SettlementSuggestionRow>();
   const groupName = (gid: string) => groupNameById?.get(gid) ?? 'Group';
 
@@ -90,7 +119,14 @@ export function buildSettlementSuggestionsForUser(
     }
   }
 
-  return Array.from(pairMap.values())
-    .filter((row) => row.amount_cents > 0)
-    .sort((a, b) => b.amount_cents - a.amount_cents);
+  const rows = Array.from(pairMap.values()).map((row) => {
+    const k = flowKey(row.group_id, row.from_user_id, row.to_user_id);
+    const recorded = recordedByFlow.get(k) ?? 0;
+    return {
+      ...row,
+      amount_cents: Math.max(0, row.amount_cents - recorded),
+    };
+  });
+
+  return rows.filter((row) => row.amount_cents > 0).sort((a, b) => b.amount_cents - a.amount_cents);
 }

@@ -383,6 +383,26 @@ export function useEvents(
     }
   };
 
+  /** RSVP: atualiza o estado do próprio participante (going / not_going). */
+  const setMyParticipantStatus = useCallback(
+    async (eventId: string, status: 'going' | 'not_going'): Promise<MutationResult> => {
+      try {
+        const { error } = await supabase
+          .from('event_participants')
+          .update({ status })
+          .eq('event_id', eventId)
+          .eq('user_id', session.user.id);
+        if (error) throw error;
+        return { success: true as const };
+      } catch (err: unknown) {
+        const message =
+          err instanceof Error ? err.message : 'Failed to update attendance';
+        return { success: false as const, error: message };
+      }
+    },
+    [session.user.id],
+  );
+
   useEffect(() => {
     fetchEvents();
   }, [fetchEvents]);
@@ -399,5 +419,6 @@ export function useEvents(
     updateEventDetails,
     closeEvent,
     finalizeEvent,
+    setMyParticipantStatus,
   };
 }

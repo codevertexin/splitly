@@ -10,6 +10,9 @@ export type AppNotification = {
   body: string | null;
   cta_label: string | null;
   cta_url: string | null;
+  entity_type?: string | null;
+  entity_id?: string | null;
+  data?: Record<string, any> | null;
   is_read: boolean;
   read_at: string | null;
   created_at: string;
@@ -30,7 +33,9 @@ export function useNotifications(session: Session) {
         .eq('user_id', session.user.id)
         .order('created_at', { ascending: false })
         .limit(20);
+
       if (qError) throw qError;
+
       setNotifications((data || []) as AppNotification[]);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Failed to load notifications');
@@ -43,21 +48,52 @@ export function useNotifications(session: Session) {
     void refetch();
   }, [refetch]);
 
-  const unreadCount = useMemo(() => notifications.filter((item) => !item.is_read).length, [notifications]);
+  useEffect(() => {
+    const channel = supabase
+      .channel(`notifications:${session.user.id}`)
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'notifications',
+          filter: `user_id=eq.${session.user.id}`,
+        },
+        () => {
+          void refetch();
+        },
+      )
+      .subscribe();
+
+    return () => {
+      void supabase.removeChannel(channel);
+    };
+  }, [session.user.id, refetch]);
+
+  const unreadCount = useMemo(
+    () => notifications.filter((item) => !item.is_read).length,
+    [notifications],
+  );
 
   const markAsRead = useCallback(
     async (notificationId: string) => {
       const target = notifications.find((item) => item.id === notificationId);
       if (!target || target.is_read) return;
+
       const nowIso = new Date().toISOString();
+
       const { error: uError } = await supabase
         .from('notifications')
         .update({ is_read: true, read_at: nowIso })
         .eq('id', notificationId)
         .eq('user_id', session.user.id);
+
       if (uError) throw uError;
+
       setNotifications((prev) =>
-        prev.map((item) => (item.id === notificationId ? { ...item, is_read: true, read_at: nowIso } : item)),
+        prev.map((item) =>
+          item.id === notificationId ? { ...item, is_read: true, read_at: nowIso } : item,
+        ),
       );
     },
     [notifications, session.user.id],
@@ -66,15 +102,29 @@ export function useNotifications(session: Session) {
   const markAllAsRead = useCallback(async () => {
     const hasUnread = notifications.some((item) => !item.is_read);
     if (!hasUnread) return;
+
     const nowIso = new Date().toISOString();
+
     const { error: uError } = await supabase
       .from('notifications')
       .update({ is_read: true, read_at: nowIso })
       .eq('user_id', session.user.id)
       .eq('is_read', false);
+
     if (uError) throw uError;
-    setNotifications((prev) => prev.map((item) => ({ ...item, is_read: true, read_at: nowIso })));
+
+    setNotifications((prev) =>
+      prev.map((item) => ({ ...item, is_read: true, read_at: nowIso })),
+    );
   }, [notifications, session.user.id]);
 
-  return { notifications, unreadCount, loading, error, refetch, markAsRead, markAllAsRead };
+  return {
+    notifications,
+    unreadCount,
+    loading,
+    error,
+    refetch,
+    markAsRead,
+    markAllAsRead,
+  };
 }

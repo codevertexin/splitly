@@ -35,7 +35,11 @@
     "confirmEmail": "Revisa tu correo para el enlace de confirmación.",
     "displayName": "Tu nombre",
     "displayNamePlaceholder": "Cómo te ven tus amigos",
-    "displayNameTooShort": "Introduce un nombre con al menos 2 caracteres."
+    "displayNameTooShort": "Introduce un nombre con al menos 2 caracteres.",
+    "username": "Nombre de usuario",
+    "usernamePlaceholder": "Ej.: ricardo.matias",
+    "usernameTooShort": "El nombre de usuario debe tener al menos 3 caracteres.",
+ "usernameInvalid": "Utilice solo letras minúsculas, números, puntos o guiones bajos."
   },
   "layout": {
     "nav": {
@@ -74,6 +78,58 @@
   "common": {
     "cancel": "Cancelar"
   },
+  "billing": {
+    "upgradeFeatureFallback": "esta función",
+    "upgradeTitle": "Mejora tu plan para usar {{feature}}",
+    "upgradeSubtitle": "Elige un plan para desbloquear funciones premium. Puedes cambiar o cancelar cuando quieras.",
+    "upgradeBenefit1": "Funciones premium en tu cuenta",
+    "upgradeBenefit2": "Funciona en tus grupos y dispositivos",
+    "upgradeBenefit3": "Pago seguro",
+    "planTierFree": "Gratis",
+    "planTierPro": "Pro",
+    "planTierPremium": "Premium",
+    "priceTierFree": "0 €",
+    "priceTierPro": "9 € / mes",
+    "priceTierPremium": "19 € / mes",
+    "detailTierPro": "Ideal para la mayoría de grupos",
+    "planProMonthly": "Pro — Mensual",
+    "planProYearly": "Pro — Anual",
+    "planPremiumMonthly": "Premium — Mensual",
+    "priceProMonthly": "9 € / mes",
+    "priceProYearly": "79 € / año",
+    "pricePremiumMonthly": "19 € / mes",
+    "detailProYearly": "Mejor valor frente al mensual",
+    "recommendedBadge": "Recomendado",
+    "ctaCheckout": "Continuar al pago",
+    "ctaDismiss": "Ahora no",
+    "featureLabels": {
+      "scan_receipt": "Leer el recibo automáticamente",
+      "scanReceiptHint": "Haz una foto del recibo y Splitly rellena los datos del gasto.",
+      "example_unreleased_premium": "Ejemplo de función premium no publicada",
+      "example_gated_premium": "Ejemplo de función premium"
+    },
+    "interestModal": {
+      "titleFallback": "Próximamente",
+      "body": "Esta función premium aún no está disponible. Deja tus datos y te avisaremos cuando esté lista.",
+      "bodyScanReceipt": "Estamos desarrollando la lectura automática de recibos: haces una foto y Splitly rellena el gasto. Deja tu correo y te avisamos cuando esté listo.",
+      "emailLabel": "Correo (opcional)",
+      "emailPlaceholder": "tu@ejemplo.com",
+      "messageLabel": "Mensaje (opcional)",
+      "messagePlaceholder": "¿Para qué te gustaría usarla?",
+      "submitError": "Algo salió mal",
+      "successBody": "Gracias — te avisaremos cuando esta función esté disponible.",
+      "close": "Cerrar",
+      "notifyMe": "Avísame",
+      "alreadyRegisteredBanner": "Ya estás en la lista de espera",
+      "alreadyRegisteredBody": "Ya tenemos registrado tu interés en esta función. Te avisaremos por correo cuando se lance — no hace falta volver a apuntarse."
+    },
+    "upgradeSuccess": {
+      "title": "Bienvenido a Premium",
+      "body": "Tu mejora está activa. Puedes continuar lo que empezamos: lo ejecutamos por ti.",
+      "later": "Más tarde",
+      "continue": "Continuar"
+    }
+  },
   "expenseSuggestions": {
     "hotel": "Alojamiento / Hotel",
     "meal": "Cena / Almuerzo",
@@ -95,12 +151,31 @@
     "eventNotFound": "Evento no encontrado o ya no disponible.",
     "eventGroupMismatch": "Ese evento no pertenece al grupo seleccionado.",
     "createFailed": "No se pudo añadir el gasto",
+    "sessionRequired": "Vuelve a iniciar sesión para crear gastos.",
     "updateFailed": "No se pudo actualizar el gasto",
     "submit": "Añadir gasto",
     "saveChanges": "Guardar cambios",
     "editTitle": "Editar gasto",
     "editAction": "Editar gasto",
-    "onboardingFirstExpenseTip": "Consejo: divide este gasto con otras personas - nosotros llevamos los saldos automáticamente."
+    "onboardingFirstExpenseTip": "Consejo: divide este gasto con otras personas - nosotros llevamos los saldos automáticamente.",
+    "receiptSectionHeading": "Recibo",
+    "receiptPhotoTitle": "Añadir foto del recibo",
+    "receiptPhotoHint": "Adjunta una foto como prueba de este gasto. Se sube al guardar.",
+    "receiptPhotoButton": "Elegir foto",
+    "receiptPhotoReplace": "Sustituir",
+    "receiptPhotoRemove": "Quitar",
+    "receiptPendingUploadNote": "Se subirá al guardar este gasto.",
+    "receiptSavedFileLabel": "Recibo guardado",
+    "receiptUploadFailed": "El gasto se guardó, pero no se pudo subir la foto del recibo. Puedes añadirla editando el gasto.",
+    "dictationStart": "Dictar texto",
+    "dictationStop": "Detener dictado",
+    "dictationListening": "Escuchando… habla ahora.",
+    "dictationError": "El reconocimiento de voz no está disponible o se denegó el permiso. Puedes seguir escribiendo a mano.",
+    "receiptOcrTitle": "Leer el recibo automáticamente",
+    "receiptOcrHint": "Haz una foto del recibo y Splitly rellena los datos del gasto por ti.",
+    "receiptOcrCta": "Avísame",
+    "receiptBadgePro": "Pro",
+    "receiptBadgeComingSoon": "Próximamente"
   },
   "settings": {
     "title": "Ajustes",
@@ -180,6 +255,7 @@
     "settleInGroupLine": "{{group}} · {{amount}}",
     "settleModalSubtitle": "Según los saldos actuales, estos son los pagos sugeridos. Selecciona cuáles quieres registrar ahora.",
     "settleModalEmpty": "No hay saldos pendientes en este momento.",
+    "settleByPersonNoNet": "No hay saldo neto por persona entre grupos. Usa «Liquidar por grupo» para liquidar dentro de cada grupo.",
     "settleModalPayLine": "Pagar {{amount}} a {{name}}",
     "settleModalReceiveLine": "Recibir {{amount}} de {{name}}",
     "settleModalSelectAtLeastOne": "Selecciona al menos un saldo.",
@@ -331,7 +407,13 @@
     "closeBlockedOk": "Entendido",
     "invalidPayer": "Elige quién pagó",
     "timelineToday": "Hoy",
-    "timelineYesterday": "Ayer"
+    "timelineYesterday": "Ayer",
+    "rsvpBannerTitle": "Confirma tu asistencia",
+    "rsvpBannerBody": "Has sido invitado a este evento. Indica si vas a participar.",
+    "rsvpGoing": "Sí voy",
+    "rsvpNotGoing": "No podré",
+    "rsvpNotGoingHint": "Indicaste que no puedes ir. Puedes cambiar tu respuesta en cualquier momento.",
+    "rsvpError": "No se pudo actualizar tu respuesta."
   },
   "help": {
     "title": "Ayuda y Soporte",
@@ -614,7 +696,7 @@
     "draftReadOnlyBadge": "Borrador",
     "howSettlementsWork": "Cómo funcionan los pagos",
     "settleHelpTitle": "Cómo funcionan los pagos",
-    "settleHelpBody": "Calculamos quién debe a quién según los gastos compartidos. Al saldar cuentas, registras pagos para que todos queden en cero.",
+    "settleHelpBody": "Calculamos quién le debe a quién en función de los gastos compartidos. Al liquidar las cuentas, se registran los pagos de forma que todos tengan un saldo cero. Hay que asegurarse de que los pagos se hayan realizado realmente para que los saldos sean correctos.",
     "settleHelpLearnMore": "Saber más"
   },
   "groupOnboarding": {
@@ -748,6 +830,17 @@
     "loadError": "Error al cargar gastos",
     "title": "Gastos",
     "subtitle": "Busca y filtra los gastos de tus grupos.",
+    "searchFilterTitle": "Buscar y filtrar",
+    "filterCardStatus": "Estado",
+    "filterCardGroup": "Grupo",
+    "filterCardDateRange": "Intervalo de fechas",
+    "searchResultsHeading": "Buscar gastos",
+    "newExpense": "Nuevo",
+    "filterChipAll": "Todas",
+    "filterChipConfirmed": "Confirmadas",
+    "filterChipDraft": "Borrador",
+    "recentSection": "Últimos 30 días",
+    "olderSection": "Anteriores",
     "quickRecentFilter": "Filtro rápido: últimos {{days}} días",
     "showFilters": "Mostrar filtros",
     "hideFilters": "Ocultar filtros",
@@ -775,6 +868,7 @@
   "events": {
     "title": "Eventos",
     "subtitle": "Gestiona viajes, cenas y actividades compartidas.",
+    "filterCardStatusTitle": "Estado",
     "newEvent": "Nuevo",
     "createNewEvent": "Crear nuevo evento",
     "searchPlaceholder": "Buscar por nombre o descripción del evento...",

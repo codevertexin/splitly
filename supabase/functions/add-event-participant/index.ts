@@ -65,6 +65,19 @@ serve(async (req) => {
       .maybeSingle();
     if (!actorMembership) return jsonResponse({ error: "You are not an active member of this group" }, 403);
 
+    // Só o criador ou quem já está na lista de participantes pode convidar outros.
+    if (event.created_by !== user.id) {
+      const { data: actorInEvent } = await admin
+        .from("event_participants")
+        .select("id")
+        .eq("event_id", event.id)
+        .eq("user_id", user.id)
+        .maybeSingle();
+      if (!actorInEvent) {
+        return jsonResponse({ error: "Only the organizer or invited participants can add people" }, 403);
+      }
+    }
+
     const { data: targetMembership } = await admin
       .from("group_members")
       .select("id")

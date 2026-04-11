@@ -3,6 +3,13 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
 import { createExpenseCanonical } from '../_shared/finance/engine/createExpenseCanonical.ts';
 import type { CreateExpenseCanonicalInput } from '../_shared/finance/types.ts';
+import { computeDebtsToPayer } from '../_shared/finance/engine/settlementAware.ts';
+
+const corsHeaders = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
+};
 
 type Json = Record<string, unknown>;
 
@@ -10,7 +17,8 @@ function json(data: Json, init: ResponseInit = {}) {
   return new Response(JSON.stringify(data), {
     ...init,
     headers: {
-      'Content-Type': 'application/json',
+      ...corsHeaders,
+      "Content-Type": "application/json",
       ...(init.headers ?? {}),
     },
   });
@@ -18,9 +26,13 @@ function json(data: Json, init: ResponseInit = {}) {
 
 serve(async (req) => {
   try {
-    if (req.method !== 'POST') {
-      return json({ error: 'Method not allowed' }, { status: 405 });
-    }
+    if (req.method === "OPTIONS") {
+  return new Response("ok", { headers: corsHeaders });
+}
+
+if (req.method !== "POST") {
+  return json({ error: "Method not allowed" }, { status: 405 });
+}
 
     const supabaseUrl = Deno.env.get('SUPABASE_URL');
     const supabaseAnonKey = Deno.env.get('SUPABASE_ANON_KEY');
@@ -70,8 +82,14 @@ serve(async (req) => {
     const description = (body.description as string | undefined) ?? '';
     const manualShares = body.manual_shares ?? [];
     const percentageShares = body.percentage_shares ?? [];
+    const title = (body.title as string | undefined)?.trim() ?? '';
+    const currency = (body.currency as string | undefined)?.trim() ?? 'EUR';
     const explicitAffectsBalancesIntent =
       (body.affects_balances_intent as boolean | null | undefined) ?? null;
+
+    if (!title) {
+      return json({ error: 'title is required' }, { status: 400 });
+    }
 
     if (!groupId) {
       return json({ error: 'group_id is required' }, { status: 400 });
@@ -151,40 +169,80 @@ serve(async (req) => {
       }
     }
 
-    const engineInput: CreateExpenseCanonicalInput = {
-      groupId,
-      eventId,
-      paidByUserId,
-      participants,
-      requestedSplitMethod,
-      amountCents,
-      statusIntent,
-      manualShares,
-      percentageShares,
-      description,
-      explicitAffectsBalancesIntent,
-      eventStatus,
-    };
+    const { data: existingExpenses, error: existingExpensesError } = await adminClient
+  .from('expenses')
+  .select(`
+    id,
+    paid_by_user_id,
+    status,
+    affects_balances,
+    event:events(status),
+    splits:expense_splits(user_id, share_cents)
+  `)
+  .eq('group_id', groupId)
+  .is('deleted_at', null);
+
+if (existingExpensesError) {
+  return json({ error: existingExpensesError.message }, { status: 400 });
+}
+
+const eligibleExpenses = (existingExpenses ?? []).filter((expense) => {
+  return expense.affects_balances === true && expense.status === 'confirmed';
+});
+
+const debtsToPayer =
+  requestedSplitMethod === 'settlement_aware'
+    ? computeDebtsToPayer({
+        members: (members ?? []).map((m) => ({ user_id: m.user_id })),
+        payerId: paidByUserId,
+        eligibleExpenses: eligibleExpenses as Array<{
+          paid_by_user_id: string;
+          splits?: Array<{ user_id: string; share_cents: number }>;
+        }>,
+      })
+    : {};
+
+const engineInput: CreateExpenseCanonicalInput = {
+  groupId,
+  eventId,
+  paidByUserId,
+  participants,
+  requestedSplitMethod,
+  amountCents,
+  statusIntent,
+  manualShares,
+  percentageShares,
+  description,
+  explicitAffectsBalancesIntent,
+  eventStatus,
+  debtsToPayer,
+};
 
     const canonical = createExpenseCanonical(engineInput);
 
     const { data: insertedExpense, error: expenseInsertError } = await adminClient
-      .from('expenses')
-      .insert({
-        group_id: groupId,
-        event_id: eventId,
-        paid_by_user_id: paidByUserId,
-        amount_cents: amountCents,
-        status: statusIntent,
-        description,
-        affects_balances: canonical.affectsBalances,
-        finance_engine_version: 'v2',
-        calculation_trace: canonical.calculationTrace,
-        balance_impact_summary: canonical.balanceImpactSummary,
-        created_by: user.id,
-      })
-      .select('*')
-      .single();
+  .from('expenses')
+  .insert({
+    group_id: groupId,
+    event_id: eventId,
+    title,
+    description,
+    amount_cents: amountCents,
+    currency,
+    paid_by_user_id: paidByUserId,
+    status: statusIntent,
+
+    split_method: requestedSplitMethod,
+    requested_split_method: requestedSplitMethod,
+
+    affects_balances: canonical.affectsBalances,
+    finance_engine_version: 'v2',
+    calculation_trace: canonical.calculationTrace,
+    balance_impact_summary: canonical.balanceImpactSummary,
+    created_by: user.id,
+  })
+  .select('*')
+  .single();
 
     if (expenseInsertError || !insertedExpense) {
       return json(

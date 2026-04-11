@@ -10,7 +10,6 @@ import { EventCard } from './components/EventCard';
 import { CreateEventForm } from './components/CreateEventForm';
 import { Button } from '../../components/ui/Button';
 import { Card } from '../../components/ui/Card';
-import { Input } from '../../components/ui/Input';
 import { Badge } from '../../components/ui/Badge';
 import { Modal } from '../../components/ui/Modal';
 
@@ -106,49 +105,49 @@ export function EventsPage({ session }: EventsPageProps) {
         )}
       </AnimatePresence>
 
-      <div className="grid grid-cols-1 lg:grid-cols-4 gap-8">
-        {/* Sidebar Filters */}
-        <div className="lg:col-span-1 space-y-6">
-          <Card className="p-6">
-            <h4 className="font-bold text-slate-900 mb-4">{t('events.searchFilterTitle')}</h4>
-            <div className="space-y-4">
-              <div className="relative">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-                <input 
-                  type="text" 
-                  placeholder={t('events.searchPlaceholder')}
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  className="w-full pl-10 pr-4 py-2 bg-slate-50 border border-slate-100 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 transition-all"
-                />
-              </div>
-              
-              <div className="space-y-2">
-                <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">{t('events.status')}</p>
-                <div className="flex flex-wrap gap-2">
-                  <button type="button" onClick={() => selectStatus('open')}>
-                    <Badge variant="green" className={`cursor-pointer transition-opacity ${isStatusFilterActive('open') ? '' : 'opacity-40'}`}>
-                      {t('events.open')}
-                    </Badge>
-                  </button>
-                  <button type="button" onClick={() => selectStatus('closed')}>
-                    <Badge variant="slate" className={`cursor-pointer transition-opacity ${isStatusFilterActive('closed') ? '' : 'opacity-40'}`}>
-                      {t('events.closed')}
-                    </Badge>
-                  </button>
-                  <button type="button" onClick={() => selectStatus('draft')}>
-                    <Badge variant="yellow" className={`cursor-pointer transition-opacity ${isStatusFilterActive('draft') ? '' : 'opacity-40'}`}>
-                      {t('events.draft')}
-                    </Badge>
-                  </button>
-                </div>
+      <div className="grid grid-cols-1 gap-6 md:grid-cols-4 md:gap-8">
+        {/* Filtros à esquerda — lado a lado com a lista a partir de md (~768px) */}
+        <aside className="space-y-4 md:col-span-1 md:sticky md:top-4 md:max-w-full md:self-start">
+          <Card className="rounded-3xl border border-slate-100 p-5 shadow-sm">
+            <h4 className="mb-4 font-bold text-slate-900">{t('events.filterCardStatusTitle')}</h4>
+            <div className="space-y-2">
+              <div className="flex flex-wrap gap-2">
+                <button type="button" onClick={() => selectStatus('open')}>
+                  <Badge variant="green" className={`cursor-pointer transition-opacity ${isStatusFilterActive('open') ? '' : 'opacity-40'}`}>
+                    {t('events.open')}
+                  </Badge>
+                </button>
+                <button type="button" onClick={() => selectStatus('closed')}>
+                  <Badge variant="slate" className={`cursor-pointer transition-opacity ${isStatusFilterActive('closed') ? '' : 'opacity-40'}`}>
+                    {t('events.closed')}
+                  </Badge>
+                </button>
+                <button type="button" onClick={() => selectStatus('draft')}>
+                  <Badge variant="yellow" className={`cursor-pointer transition-opacity ${isStatusFilterActive('draft') ? '' : 'opacity-40'}`}>
+                    {t('events.draft')}
+                  </Badge>
+                </button>
               </div>
             </div>
           </Card>
-        </div>
 
-        {/* Events List */}
-        <div className="lg:col-span-3">
+          <Card className="rounded-3xl border border-slate-100 p-4 shadow-sm">
+            <h4 className="mb-3 font-bold text-slate-900">{t('events.searchFilterTitle')}</h4>
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+              <input
+                type="text"
+                placeholder={t('events.searchPlaceholder')}
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="w-full rounded-xl border border-slate-100 bg-slate-50 py-2.5 pl-10 pr-4 text-sm transition-all focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+              />
+            </div>
+          </Card>
+        </aside>
+
+        {/* Resultados à direita */}
+        <div className="min-w-0 space-y-6 md:col-span-3">
           {eventsError && (
             <div className="mb-6 p-4 bg-red-50 border border-red-100 rounded-2xl">
               <div className="flex items-start gap-3">
@@ -221,3 +220,4 @@ export function EventsPage({ session }: EventsPageProps) {
     </motion.div>
   );
 }
+

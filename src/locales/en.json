@@ -35,7 +35,11 @@
     "confirmEmail": "Check your email for the confirmation link!",
     "displayName": "Your name",
     "displayNamePlaceholder": "How friends see you",
-    "displayNameTooShort": "Please enter a name with at least 2 characters."
+    "displayNameTooShort": "Please enter a name with at least 2 characters.",
+    "username": "Username",
+    "usernamePlaceholder": "e.g., ricardo.matias",
+    "usernameTooShort": "The username must be at least 3 characters long.",
+  "usernameInvalid": "Use only lowercase letters, numbers, periods, or underscores."
   },
   "layout": {
     "nav": {
@@ -74,6 +78,58 @@
   "common": {
     "cancel": "Cancel"
   },
+  "billing": {
+    "upgradeFeatureFallback": "this feature",
+    "upgradeTitle": "Upgrade to use {{feature}}",
+    "upgradeSubtitle": "Pick a plan to unlock premium features. You can change or cancel anytime.",
+    "upgradeBenefit1": "Premium features for your account",
+    "upgradeBenefit2": "Works across your groups and devices",
+    "upgradeBenefit3": "Secure checkout",
+    "planTierFree": "Free",
+    "planTierPro": "Pro",
+    "planTierPremium": "Premium",
+    "priceTierFree": "€0",
+    "priceTierPro": "€9 / month",
+    "priceTierPremium": "€19 / month",
+    "detailTierPro": "Best for most groups",
+    "planProMonthly": "Pro — Monthly",
+    "planProYearly": "Pro — Yearly",
+    "planPremiumMonthly": "Premium — Monthly",
+    "priceProMonthly": "€9 / month",
+    "priceProYearly": "€79 / year",
+    "pricePremiumMonthly": "€19 / month",
+    "detailProYearly": "Best value vs monthly",
+    "recommendedBadge": "Recommended",
+    "ctaCheckout": "Continue to checkout",
+    "ctaDismiss": "Not now",
+    "featureLabels": {
+      "scan_receipt": "Read receipt automatically",
+      "scanReceiptHint": "Snap a receipt and Splitly fills in your expense details.",
+      "example_unreleased_premium": "Example unreleased premium",
+      "example_gated_premium": "Example premium feature"
+    },
+    "interestModal": {
+      "titleFallback": "Coming soon",
+      "body": "This premium capability isn't released yet. Leave your details and we'll notify you.",
+      "bodyScanReceipt": "We're building automatic receipt reading: you'll snap a photo and Splitly will fill in your expense for you. Leave your email and we'll let you know when it's ready.",
+      "emailLabel": "Email (optional)",
+      "emailPlaceholder": "you@example.com",
+      "messageLabel": "Message (optional)",
+      "messagePlaceholder": "What would you use this for?",
+      "submitError": "Something went wrong",
+      "successBody": "Thanks — we'll let you know when this feature is available.",
+      "close": "Close",
+      "notifyMe": "Notify me",
+      "alreadyRegisteredBanner": "You're already on the waitlist",
+      "alreadyRegisteredBody": "We already have your interest registered for this feature. We'll email you when it launches — no need to sign up again."
+    },
+    "upgradeSuccess": {
+      "title": "Welcome to Premium",
+      "body": "Your upgrade is active. You can continue what you started — we'll run it for you.",
+      "later": "Later",
+      "continue": "Continue"
+    }
+  },
   "expenseSuggestions": {
     "hotel": "Accommodation / Hotel",
     "meal": "Dinner / Lunch",
@@ -95,12 +151,31 @@
     "eventNotFound": "Event not found or no longer available.",
     "eventGroupMismatch": "That event does not belong to the selected group.",
     "createFailed": "Failed to add expense",
+    "sessionRequired": "Sign in again to create expenses.",
     "updateFailed": "Failed to update expense",
     "submit": "Add expense",
     "saveChanges": "Save changes",
     "editTitle": "Edit expense",
     "editAction": "Edit expense",
-    "onboardingFirstExpenseTip": "Tip: split this expense with others - we'll track everything automatically."
+    "onboardingFirstExpenseTip": "Tip: split this expense with others - we'll track everything automatically.",
+    "receiptSectionHeading": "Receipt",
+    "receiptPhotoTitle": "Add receipt photo",
+    "receiptPhotoHint": "Attach a photo as proof of this expense. It is uploaded when you save.",
+    "receiptPhotoButton": "Choose photo",
+    "receiptPhotoReplace": "Replace",
+    "receiptPhotoRemove": "Remove",
+    "receiptPendingUploadNote": "Uploads when you save this expense.",
+    "receiptSavedFileLabel": "Saved receipt",
+    "receiptUploadFailed": "The expense was saved, but the receipt photo could not be uploaded. You can add it by editing the expense.",
+    "dictationStart": "Dictate text",
+    "dictationStop": "Stop dictation",
+    "dictationListening": "Listening… speak now.",
+    "dictationError": "Speech recognition is not available or permission was denied. You can still type normally.",
+    "receiptOcrTitle": "Read receipt automatically",
+    "receiptOcrHint": "Take a photo of the receipt and Splitly fills in the expense details for you.",
+    "receiptOcrCta": "Notify me",
+    "receiptBadgePro": "Pro",
+    "receiptBadgeComingSoon": "Coming soon"
   },
   "settings": {
     "title": "Settings",
@@ -180,6 +255,7 @@
     "settleInGroupLine": "{{group}} · {{amount}}",
     "settleModalSubtitle": "Based on current balances, these are suggested payments. Select what you want to record now.",
     "settleModalEmpty": "There are no pending settlements right now.",
+    "settleByPersonNoNet": "There is no net balance per person across groups. Use “Settle by group” to settle within each group.",
     "settleModalPayLine": "Pay {{amount}} to {{name}}",
     "settleModalReceiveLine": "Receive {{amount}} from {{name}}",
     "settleModalSelectAtLeastOne": "Select at least one settlement.",
@@ -331,7 +407,13 @@
     "closeBlockedOk": "Got it",
     "invalidPayer": "Choose who paid",
     "timelineToday": "Today",
-    "timelineYesterday": "Yesterday"
+    "timelineYesterday": "Yesterday",
+    "rsvpBannerTitle": "Confirm your attendance",
+    "rsvpBannerBody": "You were invited to this event. Let others know if you’re coming.",
+    "rsvpGoing": "I'm going",
+    "rsvpNotGoing": "Can't go",
+    "rsvpNotGoingHint": "You said you can’t go. You can change your answer anytime.",
+    "rsvpError": "Could not update your response."
   },
   "help": {
     "title": "Help & Support",
@@ -614,7 +696,7 @@
     "draftReadOnlyBadge": "Draft",
     "howSettlementsWork": "How settlements work",
     "settleHelpTitle": "How settlements work",
-    "settleHelpBody": "We calculate who owes whom based on shared expenses. To settle up, you can record payments so everyone’s balance returns to zero.",
+    "settleHelpBody": "We calculate who owes whom based on shared expenses. When settling accounts, you record payments so that everyone has a zero balance. You have to make sure the payments were actually made so that the balances are correct.",
     "settleHelpLearnMore": "Learn more"
   },
   "groupOnboarding": {
@@ -748,6 +830,17 @@
     "loadError": "Error loading expenses",
     "title": "Expenses",
     "subtitle": "Search and filter your group expenses.",
+    "searchFilterTitle": "Search & filter",
+    "filterCardStatus": "Status",
+    "filterCardGroup": "Group",
+    "filterCardDateRange": "Date range",
+    "searchResultsHeading": "Search expenses",
+    "newExpense": "New",
+    "filterChipAll": "All",
+    "filterChipConfirmed": "Confirmed",
+    "filterChipDraft": "Draft",
+    "recentSection": "Last 30 days",
+    "olderSection": "Earlier",
     "quickRecentFilter": "Quick filter: last {{days}} days",
     "showFilters": "Show Filters",
     "hideFilters": "Hide Filters",
@@ -775,6 +868,7 @@
   "events": {
     "title": "Events",
     "subtitle": "Manage trips, dinners, and shared activities.",
+    "filterCardStatusTitle": "Status",
     "newEvent": "New",
     "createNewEvent": "Create New Event",
     "searchPlaceholder": "Search by event name or description...",

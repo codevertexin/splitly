@@ -1,0 +1,148 @@
+import { serve } from 'https://deno.land/std@0.224.0/http/server.ts';
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+
+const corsHeaders = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Methods': 'POST, OPTIONS',
+};
+
+function json(data: Record<string, unknown>, init: ResponseInit = {}) {
+  return new Response(JSON.stringify(data), {
+    ...init,
+    headers: {
+      ...corsHeaders,
+      'Content-Type': 'application/json',
+      ...(init.headers ?? {}),
+    },
+  });
+}
+
+function isValidReceiptPathForExpense(
+  receiptPath: string,
+  groupId: string,
+  expenseId: string,
+): boolean {
+  const parts = receiptPath.split('/').filter(Boolean);
+  if (parts.length < 3) return false;
+  return parts[0] === groupId && parts[1] === expenseId;
+}
+
+serve(async (req) => {
+  try {
+    if (req.method === 'OPTIONS') {
+      return new Response('ok', { headers: corsHeaders });
+    }
+
+    if (req.method !== 'POST') {
+      return json({ error: 'Method not allowed' }, { status: 405 });
+    }
+
+    const supabaseUrl = Deno.env.get('SUPABASE_URL');
+    const supabaseAnonKey = Deno.env.get('SUPABASE_ANON_KEY');
+    const supabaseServiceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+
+    if (!supabaseUrl || !supabaseAnonKey || !supabaseServiceRoleKey) {
+      return json({ error: 'Missing Supabase env vars' }, { status: 500 });
+    }
+
+    const authHeader = req.headers.get('Authorization');
+    if (!authHeader) {
+      return json({ error: 'Missing Authorization header' }, { status: 401 });
+    }
+
+    const userClient = createClient(supabaseUrl, supabaseAnonKey, {
+      global: { headers: { Authorization: authHeader } },
+    });
+
+    const adminClient = createClient(supabaseUrl, supabaseServiceRoleKey);
+
+    const {
+      data: { user },
+      error: authError,
+    } = await userClient.auth.getUser();
+
+    if (authError || !user) {
+      return json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
+    const body = await req.json() as { expense_id?: string; receipt_path?: string | null };
+
+    const expenseId = body.expense_id as string;
+    const hasReceiptPath = Object.prototype.hasOwnProperty.call(body, 'receipt_path');
+    const receiptPath = hasReceiptPath ? (body.receipt_path as string | null) : undefined;
+
+    if (!expenseId) {
+      return json({ error: 'expense_id is required' }, { status: 400 });
+    }
+    if (!hasReceiptPath) {
+      return json({ error: 'receipt_path is required (use null to clear)' }, { status: 400 });
+    }
+
+    const { data: existingExpense, error: existingExpenseError } = await adminClient
+      .from('expenses')
+      .select('id, group_id, event_id, paid_by_user_id, created_by')
+      .eq('id', expenseId)
+      .maybeSingle();
+
+    if (existingExpenseError) {
+      return json({ error: existingExpenseError.message }, { status: 400 });
+    }
+
+    if (!existingExpense) {
+      return json({ error: 'Expense not found' }, { status: 404 });
+    }
+
+    if (
+      existingExpense.created_by !== user.id &&
+      existingExpense.paid_by_user_id !== user.id
+    ) {
+      return json({ error: 'Forbidden' }, { status: 403 });
+    }
+
+    const groupId = existingExpense.group_id as string;
+
+    const { data: membership, error: membershipError } = await adminClient
+      .from('group_members')
+      .select('group_id')
+      .eq('group_id', groupId)
+      .eq('user_id', user.id)
+      .eq('status', 'active')
+      .maybeSingle();
+
+    if (membershipError) {
+      return json({ error: membershipError.message }, { status: 400 });
+    }
+
+    if (!membership) {
+      return json({ error: 'You are not an active member of this group' }, { status: 403 });
+    }
+
+    if (receiptPath !== null && receiptPath !== '') {
+      if (!isValidReceiptPathForExpense(receiptPath, groupId, expenseId)) {
+        return json({ error: 'Invalid receipt_path for this expense' }, { status: 400 });
+      }
+    }
+
+    const nextPath = receiptPath === '' ? null : receiptPath;
+
+    const { data: updated, error: updateError } = await adminClient
+      .from('expenses')
+      .update({ receipt_path: nextPath })
+      .eq('id', expenseId)
+      .select('id, receipt_path')
+      .single();
+
+    if (updateError || !updated) {
+      return json(
+        { error: updateError?.message ?? 'Failed to update expense' },
+        { status: 400 },
+      );
+    }
+
+    return json({ expense: updated });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    return json({ error: message }, { status: 500 });
+  }
+});

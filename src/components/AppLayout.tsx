@@ -25,6 +25,8 @@ import { MemberAvatar } from './MemberAvatar';
 import { useUserProfile } from '../hooks/useUserProfile';
 import { ProfileNameGate } from './ProfileNameGate';
 import { useNotifications } from '../hooks/useNotifications';
+import { notifyExpensesChanged } from '../lib/expenseEvents';
+import { BillingGuardProvider } from '../features/billing/BillingGuardProvider';
 
 interface AppLayoutProps {
   session: Session;
@@ -41,6 +43,8 @@ const NAV_DEFS = [
 
 function notificationIcon(type: string) {
   if (type === 'payment_request') return Receipt;
+  if (type === 'settlement_confirmation_request') return Receipt;
+  if (type === 'settlement_confirmed') return Receipt;
   if (type === 'event_ready_to_finalize') return CalendarCheck2;
   if (type === 'draft_expenses_need_review') return AlertTriangle;
   return Bell;
@@ -69,14 +73,43 @@ export function AppLayout({ session }: AppLayoutProps) {
   const navigate = useNavigate();
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
+  const [actingNotificationId, setActingNotificationId] = useState<string | null>(null);
   const appLogoSrc = '/logo-splitly-app.png';
 
   const userMenuRef = useRef<HTMLDivElement>(null);
   const notificationsRef = useRef<HTMLDivElement>(null);
-  const { notifications, unreadCount, loading: notificationsLoading, error: notificationsError, markAsRead, markAllAsRead } =
-    useNotifications(session);
+  const {
+    notifications,
+    unreadCount,
+    loading: notificationsLoading,
+    error: notificationsError,
+    refetch: refetchNotifications,
+    markAsRead,
+    markAllAsRead,
+  } = useNotifications(session);
 
   const activeTab = location.pathname.split('/')[1] || 'dashboard';
+
+  const refreshGroupFromNotification = (item: any) => {
+    const groupId =
+      item?.data?.group_id ||
+      item?.entity_id ||
+      (() => {
+        if (!item?.cta_url) return null;
+        const m = String(item.cta_url).match(/\/groups\/([^/?#]+)/);
+        return m?.[1] ?? null;
+      })();
+  
+    if (!groupId) return;
+  
+    window.dispatchEvent(
+      new CustomEvent('group-settlement-confirmed', {
+        detail: { groupId },
+      }),
+    );
+  
+    notifyExpensesChanged({ groupId });
+  };
 
   useEffect(() => {
     if (!userMenuOpen && !notificationsOpen) return;
@@ -118,6 +151,47 @@ export function AppLayout({ session }: AppLayoutProps) {
     if (i18n.language === 'es') return 'es';
     return 'en';
   }, [i18n.language]);
+
+  const handleConfirmSettlementNotification = async (item: any) => {
+    try {
+      if (actingNotificationId) return;
+  
+      setActingNotificationId(item.id);
+  
+      const { data, error } = await supabase.functions.invoke(
+        'confirm-settlement-request',
+        {
+          body: { notification_id: item.id },
+        }
+      );
+  
+      if (error) throw error;
+      if (data?.error) throw new Error(String(data.error));
+  
+      const groupId = item.data?.group_id ?? item.entity_id ?? null;
+  
+      try {
+        await markAsRead(item.id);
+      } catch {
+        // noop
+      }
+
+      await refetchNotifications();
+
+      if (groupId) {
+        refreshGroupFromNotification({
+          data: { group_id: groupId },
+          entity_id: groupId,
+        });
+      }
+
+      setNotificationsOpen(false);
+    } catch (err) {
+      console.error('confirm-settlement-request failed:', err);
+    } finally {
+      setActingNotificationId(null);
+    }
+  };
 
   return (
     <div className="min-h-screen bg-[#F8FAFC] flex font-sans">
@@ -238,8 +312,13 @@ export function AppLayout({ session }: AppLayoutProps) {
               <button
                 type="button"
                 onClick={() => {
-                  setNotificationsOpen((o) => !o);
+                  const nextOpen = !notificationsOpen;
+                  setNotificationsOpen(nextOpen);
                   setUserMenuOpen(false);
+                
+                  if (nextOpen) {
+                    void refetchNotifications();
+                  }
                 }}
                 className="p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-50 rounded-xl transition-all relative"
                 aria-label={t('layout.notifications')}
@@ -298,27 +377,43 @@ export function AppLayout({ session }: AppLayoutProps) {
                         {notifications.map((item) => {
                           const Icon = notificationIcon(item.type);
                           const title =
-                            item.title ||
-                            (item.type === 'payment_request'
-                              ? t('layout.notificationTypePaymentRequest')
-                              : item.type === 'event_ready_to_finalize'
-                                ? t('layout.notificationTypeEventReady')
-                                : item.type === 'draft_expenses_need_review'
-                                  ? t('layout.notificationTypeDraftReview')
-                                  : t('layout.notificationTypeGeneral'));
+  item.title ||
+  (item.type === 'payment_request'
+    ? t('layout.notificationTypePaymentRequest')
+    : item.type === 'settlement_confirmation_request'
+      ? 'Payment confirmation requested'
+      : item.type === 'settlement_confirmed'
+        ? 'Payment confirmed'
+        : item.type === 'event_ready_to_finalize'
+          ? t('layout.notificationTypeEventReady')
+          : item.type === 'draft_expenses_need_review'
+            ? t('layout.notificationTypeDraftReview')
+            : t('layout.notificationTypeGeneral'));
                           return (
                             <li key={item.id}>
                               <button
-                                type="button"
-                                onClick={async () => {
-                                  try {
-                                    await markAsRead(item.id);
-                                  } catch {
-                                    // noop for v1
-                                  }
-                                  setNotificationsOpen(false);
-                                  if (item.cta_url) navigate(item.cta_url);
-                                }}
+  type="button"
+  onClick={async (e) => {
+    e.stopPropagation();
+
+    if (item.type === 'settlement_confirmation_request') {
+      await handleConfirmSettlementNotification(item);
+      return;
+    }
+
+    try {
+      await markAsRead(item.id);
+    } catch {
+      // noop
+    }
+
+    refreshGroupFromNotification(item);
+    setNotificationsOpen(false);
+
+    if (item.cta_url) {
+      navigate(item.cta_url as string);
+    }
+  }}
                                 className={`w-full text-left px-4 py-3 flex items-start gap-3 hover:bg-slate-50 transition-colors ${
                                   item.is_read ? 'bg-white' : 'bg-blue-50/40'
                                 }`}
@@ -334,23 +429,17 @@ export function AppLayout({ session }: AppLayoutProps) {
                                     {formatNotificationDate(item.created_at, locale)}
                                   </span>
                                 </span>
-                                {item.cta_label && item.cta_url && (
-                                  <span
-                                    onClick={async (e) => {
-                                      e.stopPropagation();
-                                      try {
-                                        await markAsRead(item.id);
-                                      } catch {
-                                        // noop for v1
-                                      }
-                                      setNotificationsOpen(false);
-                                      navigate(item.cta_url as string);
-                                    }}
-                                    className="shrink-0 rounded-lg border border-slate-200 px-2 py-1 text-[11px] font-semibold text-slate-700 hover:bg-slate-100"
-                                  >
-                                    {item.cta_label}
-                                  </span>
-                                )}
+                                {item.cta_label && (
+  <span
+    className={`shrink-0 rounded-lg border border-slate-200 px-2 py-1 text-[11px] font-semibold ${
+      actingNotificationId === item.id
+        ? 'text-slate-400 opacity-60'
+        : 'text-slate-700'
+    }`}
+  >
+    {actingNotificationId === item.id ? '...' : item.cta_label}
+  </span>
+)}
                               </button>
                             </li>
                           );
@@ -436,7 +525,12 @@ export function AppLayout({ session }: AppLayoutProps) {
         </header>
 
         <div className="flex-1 px-4 py-4 pb-[calc(5.5rem+env(safe-area-inset-bottom))] sm:px-6 sm:py-6 md:pb-6 lg:px-8 lg:py-8 lg:pb-8 max-w-6xl mx-auto w-full">
-          <Outlet />
+          <BillingGuardProvider
+            defaultEmail={typeof session.user.email === 'string' ? session.user.email : ''}
+            interestUserId={session.user.id}
+          >
+            <Outlet />
+          </BillingGuardProvider>
         </div>
 
         <footer className="mt-auto px-4 pb-[calc(5rem+env(safe-area-inset-bottom))] pt-2 sm:px-6 md:pb-8 lg:px-8 text-center text-slate-400 text-xs">

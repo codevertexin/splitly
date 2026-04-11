@@ -1,9 +1,10 @@
-import React, { useState, useMemo, useCallback, useEffect } from 'react';
+import React, { useState, useMemo, useCallback, useEffect, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
-import { CreditCard, Search, Filter, Calendar, Users, Loader2, AlertCircle, ChevronDown, ChevronUp } from 'lucide-react';
-import { motion, AnimatePresence } from 'motion/react';
+import { CreditCard, Search, Calendar, Users, Loader2, AlertCircle, Plus } from 'lucide-react';
+import { motion } from 'motion/react';
 import { Session } from '@supabase/supabase-js';
-import { useSearchParams } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
+import { trackProductEvent } from '../../lib/productTracking';
 import { ExpenseListRow, useExpenses } from '../../hooks/useExpenses';
 import { useGroups } from '../../hooks/useGroups';
 import { supabase } from '../../lib/supabase';
@@ -21,6 +22,18 @@ import {
   computeDebtsToCurrentUser,
   suggestSettlementAwareEqualSplit,
 } from '../../lib/settlementSplit';
+import {
+  buildExpenseReceiptObjectPath,
+  removeExpenseReceiptObject,
+  uploadExpenseReceiptObject,
+} from '../../lib/expenseReceiptStorage';
+import { useExpenseReceiptSignedUrl } from '../../hooks/useExpenseReceiptSignedUrl';
+import { ExpenseReceiptSection } from './components/ExpenseReceiptSection';
+import {
+  PRODUCT_EVENT_BILLING_SCAN_RECEIPT_CLICK,
+  SCAN_RECEIPT_FEATURE_KEY,
+  useBillingGuard,
+} from '../billing';
 
 interface ExpensesPageProps {
   session: Session;
@@ -44,7 +57,7 @@ export function ExpensesPage({ session }: ExpensesPageProps) {
   const [selectedStatus, setSelectedStatus] = useState<'all' | 'draft' | 'confirmed'>('all');
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
-  const [showFilters, setShowFilters] = useState(false);
+  const navigate = useNavigate();
   const [editingExpense, setEditingExpense] = useState<ExpenseListRow | null>(null);
   const [editTitle, setEditTitle] = useState('');
   const [editAmount, setEditAmount] = useState('');
@@ -58,6 +71,12 @@ export function ExpensesPage({ session }: ExpensesPageProps) {
   const [editMembers, setEditMembers] = useState<Array<{ user_id: string; full_name: string | null }>>([]);
   const [editError, setEditError] = useState<string | null>(null);
   const [editStatus, setEditStatus] = useState<'draft' | 'confirmed'>('confirmed');
+  const editReceiptAttachmentInputRef = useRef<HTMLInputElement>(null);
+  const editReceiptPreviewObjectUrlRef = useRef<string | null>(null);
+  const [editReceiptFile, setEditReceiptFile] = useState<File | null>(null);
+  const [editReceiptPreviewUrl, setEditReceiptPreviewUrl] = useState<string | null>(null);
+  const [editReceiptRemoved, setEditReceiptRemoved] = useState(false);
+  const billing = useBillingGuard();
   const recentQuickFilterDays = useMemo(() => {
     const recentRaw = searchParams.get('recent');
     if (!recentRaw) return null;
@@ -76,6 +95,14 @@ export function ExpensesPage({ session }: ExpensesPageProps) {
   }, []);
 
   useEffect(() => {
+    return () => {
+      if (editReceiptPreviewObjectUrlRef.current) {
+        URL.revokeObjectURL(editReceiptPreviewObjectUrlRef.current);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
     if (!recentQuickFilterDays) return;
     // Quick filter uses last N complete days (excludes today, which is usually partial).
     const today = new Date();
@@ -87,7 +114,6 @@ export function ExpensesPage({ session }: ExpensesPageProps) {
     const toStr = formatDateForInput(end);
     setStartDate(fromStr);
     setEndDate(toStr);
-    setShowFilters(true);
   }, [recentQuickFilterDays, formatDateForInput]);
 
   const filteredExpenses = useMemo(() => {
@@ -112,6 +138,37 @@ export function ExpensesPage({ session }: ExpensesPageProps) {
     });
   }, [expenses, searchQuery, selectedGroupId, selectedStatus, startDate, endDate]);
 
+  const recentThreshold = useMemo(() => {
+    const d = new Date();
+    d.setDate(d.getDate() - 30);
+    d.setHours(0, 0, 0, 0);
+    return d.getTime();
+  }, []);
+
+  const { recentExpenses, olderExpenses } = useMemo(() => {
+    const recent: ExpenseListRow[] = [];
+    const older: ExpenseListRow[] = [];
+    for (const e of filteredExpenses) {
+      const t = new Date(e.incurred_at).getTime();
+      if (t >= recentThreshold) recent.push(e);
+      else older.push(e);
+    }
+    return { recentExpenses: recent, olderExpenses: older };
+  }, [filteredExpenses, recentThreshold]);
+
+  const selectStatusChip = useCallback((next: 'all' | 'draft' | 'confirmed') => {
+    if (next === 'all') {
+      setSelectedStatus('all');
+      return;
+    }
+    setSelectedStatus((prev) => (prev === next ? 'all' : next));
+  }, []);
+
+  const isStatusChipActive = useCallback(
+    (s: 'all' | 'draft' | 'confirmed') => selectedStatus === s,
+    [selectedStatus],
+  );
+
   const formatCurrency = useCallback(
     (amountCents: number, currency: string) => formatCurrencyCents(amountCents, { locale, currency }),
     [locale]
@@ -119,7 +176,11 @@ export function ExpensesPage({ session }: ExpensesPageProps) {
 
   const canEditExpense = useCallback(
     (expense: ExpenseListRow) =>
-      expense.created_by === session.user.id && (!expense.event || expense.event.status !== 'closed'),
+      (
+        expense.created_by === session.user.id ||
+        expense.paid_by_user_id === session.user.id
+      ) &&
+      (!expense.event || expense.event.status !== 'closed'),
     [session.user.id]
   );
   const editAmountCentsPreview = Math.round((parseFloat(editAmount.replace(',', '.')) || 0) * 100);
@@ -159,6 +220,64 @@ export function ExpensesPage({ session }: ExpensesPageProps) {
   }, 0);
   const editPercentageDelta = 100 - editPercentageTotal;
 
+  const revokeEditReceiptPreview = useCallback(() => {
+    if (editReceiptPreviewObjectUrlRef.current) {
+      URL.revokeObjectURL(editReceiptPreviewObjectUrlRef.current);
+      editReceiptPreviewObjectUrlRef.current = null;
+    }
+    setEditReceiptPreviewUrl(null);
+  }, []);
+
+  const applyEditReceiptFile = useCallback(
+    (file: File | null) => {
+      revokeEditReceiptPreview();
+      setEditReceiptFile(file);
+      setEditReceiptRemoved(false);
+      if (file) {
+        const url = URL.createObjectURL(file);
+        editReceiptPreviewObjectUrlRef.current = url;
+        setEditReceiptPreviewUrl(url);
+      }
+    },
+    [revokeEditReceiptPreview],
+  );
+
+  const handleEditReceiptAttachmentChange = useCallback(
+    (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      e.target.value = '';
+      if (!file) return;
+      applyEditReceiptFile(file);
+    },
+    [applyEditReceiptFile],
+  );
+
+  const handleEditRemoveReceipt = useCallback(() => {
+    if (editReceiptFile) {
+      applyEditReceiptFile(null);
+      return;
+    }
+    setEditReceiptRemoved(true);
+  }, [editReceiptFile, applyEditReceiptFile]);
+
+  const handleEditOcrInterestClick = useCallback(() => {
+    void trackProductEvent(PRODUCT_EVENT_BILLING_SCAN_RECEIPT_CLICK, {
+      metadata: {
+        featureKey: SCAN_RECEIPT_FEATURE_KEY,
+        source: 'dashboard',
+        subscription_tier: billing.tier,
+        feature_unreleased: true,
+      },
+    });
+    void billing.guardAndRun(SCAN_RECEIPT_FEATURE_KEY, () => {}, {
+      interestSource: 'dashboard',
+    });
+  }, [billing.guardAndRun, billing.tier]);
+
+  const storedReceiptPathForPreview =
+    editingExpense?.receipt_path && !editReceiptRemoved ? editingExpense.receipt_path : null;
+  const storedReceiptSignedUrl = useExpenseReceiptSignedUrl(storedReceiptPathForPreview);
+
   const openEditModal = (expense: ExpenseListRow) => {
     if (!canEditExpense(expense)) return;
     setEditingExpense(expense);
@@ -185,9 +304,14 @@ export function ExpensesPage({ session }: ExpensesPageProps) {
     setEditPercentageShares(pctMap);
     setEditStatus(expense.status === 'draft' ? 'draft' : 'confirmed');
     setEditError(null);
+    applyEditReceiptFile(null);
+    setEditReceiptRemoved(false);
   };
 
   const closeEditModal = () => {
+    revokeEditReceiptPreview();
+    setEditReceiptFile(null);
+    setEditReceiptRemoved(false);
     setEditingExpense(null);
     setEditError(null);
   };
@@ -303,7 +427,21 @@ export function ExpensesPage({ session }: ExpensesPageProps) {
       }
     }
 
-    const result = await updateExpense(editingExpense.id, {
+    let receipt_path: string | null | undefined = undefined;
+    if (editReceiptFile) {
+      const path = buildExpenseReceiptObjectPath(editingExpense.group_id, editingExpense.id, editReceiptFile);
+      const up = await uploadExpenseReceiptObject(supabase, path, editReceiptFile);
+      if (up.error) {
+        setEditError(t('expenseForm.receiptUploadFailed'));
+        return;
+      }
+      receipt_path = path;
+    } else if (editReceiptRemoved && editingExpense.receipt_path) {
+      receipt_path = null;
+    }
+
+    console.log('[edit-expense] payload', {
+      expenseId: editingExpense.id,
       title: trimmedTitle,
       amount_cents: amountCents,
       description: editDescription.trim() ? editDescription.trim() : null,
@@ -312,9 +450,34 @@ export function ExpensesPage({ session }: ExpensesPageProps) {
       participant_ids: editParticipantIds,
       splits,
       status: editStatus,
+      receipt_path,
     });
 
+    const updatePayload: Parameters<typeof updateExpense>[1] = {
+      title: trimmedTitle,
+      amount_cents: amountCents,
+      description: editDescription.trim() ? editDescription.trim() : null,
+      split_method:
+        editSplitMethod === 'equal' && editSettleAwareEnabled && editSettleAwareAvailable ? 'manual' : editSplitMethod,
+      participant_ids: editParticipantIds,
+      splits,
+      status: editStatus,
+    };
+    if (receipt_path !== undefined) {
+      updatePayload.receipt_path = receipt_path;
+    }
+
+    const result = await updateExpense(editingExpense.id, updatePayload);
+
+    console.log('[edit-expense] result', result);
     if (result.success) {
+      const prevPath = editingExpense.receipt_path;
+      if (receipt_path && prevPath && prevPath !== receipt_path) {
+        await removeExpenseReceiptObject(supabase, prevPath);
+      }
+      if (receipt_path === null && prevPath) {
+        await removeExpenseReceiptObject(supabase, prevPath);
+      }
       closeEditModal();
     } else {
       setEditError(result.error || t('expenseForm.updateFailed'));
@@ -339,10 +502,87 @@ export function ExpensesPage({ session }: ExpensesPageProps) {
     );
   }
 
+  const renderExpenseCard = (expense: ExpenseListRow) => {
+    const editable = canEditExpense(expense);
+    return (
+      <Card
+        padding="none"
+        className={`overflow-hidden transition-all ${
+          editable
+            ? 'cursor-pointer !border-sky-200 !bg-sky-50 shadow-sm hover:!bg-sky-100 hover:!border-sky-300'
+            : 'cursor-default'
+        }`}
+        onClick={editable ? () => openEditModal(expense) : undefined}
+      >
+        <div className="flex flex-col gap-4 p-4 sm:p-6 md:flex-row md:items-center md:gap-6">
+          <div className="flex min-w-0 flex-1 items-start gap-3 sm:gap-4 md:items-center">
+            {(() => {
+              const matched = classifyExpenseTitle(expense.title);
+              return (
+                <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-blue-50 text-blue-600">
+                  {matched ? (
+                    <span className="text-2xl" aria-hidden>
+                      {matched.icon}
+                    </span>
+                  ) : (
+                    <CreditCard className="h-6 w-6" />
+                  )}
+                </div>
+              );
+            })()}
+
+            <div className="min-w-0 flex-1 space-y-2">
+              <h4 className="break-words text-base font-bold leading-snug text-slate-900 sm:text-lg">
+                {expense.title}
+              </h4>
+              <div className="flex flex-wrap gap-2">
+                <Badge variant="slate" size="sm" className="max-w-full">
+                  {groups.find((g) => g.id === expense.group_id)?.name || t('expenses.unknownGroup')}
+                </Badge>
+                {expense.event?.title && (
+                  <Badge variant="blue" size="sm" className="max-w-full">
+                    {expense.event.title}
+                  </Badge>
+                )}
+              </div>
+
+              <div className="flex flex-col gap-2 text-sm text-slate-500 sm:flex-row sm:flex-wrap sm:items-center sm:gap-x-4 sm:gap-y-1">
+                <span className="inline-flex shrink-0 items-center gap-1.5">
+                  <Calendar className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                  {formatDateOnly(expense.incurred_at, locale)}
+                </span>
+                <span className="flex min-w-0 items-start gap-1.5 sm:items-center">
+                  <Users className="mt-0.5 h-3.5 w-3.5 shrink-0 sm:mt-0" aria-hidden />
+                  <span className="min-w-0 break-words leading-snug">
+                    {t('expenses.paidBy', { name: expense.profiles?.full_name || '—' })}
+                  </span>
+                </span>
+              </div>
+
+              {expense.description && (
+                <p className="line-clamp-2 text-sm leading-snug text-slate-400">{expense.description}</p>
+              )}
+            </div>
+          </div>
+
+          <div className="flex shrink-0 flex-col gap-0.5 border-t border-slate-200/80 pt-3 md:flex-col md:items-end md:border-t-0 md:pt-0 md:text-right">
+            <p className="text-xl font-bold tabular-nums text-slate-900">
+              {formatCurrency(expense.amount_cents, expense.currency)}
+            </p>
+            <p className="text-xs font-bold uppercase tracking-wider text-slate-400">
+              {t('expenses.splitMethod', { method: expense.split_method })}
+            </p>
+          </div>
+        </div>
+      </Card>
+    );
+  };
+
   return (
-    <motion.div 
-      initial={{ opacity: 0, y: 20 }}
-      animate={{ opacity: 1, y: 0 }}
+    <motion.div
+      initial={{ opacity: 0, x: -20 }}
+      animate={{ opacity: 1, x: 0 }}
+      exit={{ opacity: 0, x: 20 }}
       className="space-y-8"
     >
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
@@ -357,185 +597,170 @@ export function ExpensesPage({ session }: ExpensesPageProps) {
             </div>
           )}
         </div>
-        <Button onClick={() => setShowFilters(!showFilters)} variant="outline">
-          <Filter className="w-4 h-4 mr-2" />
-          {showFilters ? t('expenses.hideFilters') : t('expenses.showFilters')}
-          {showFilters ? <ChevronUp className="w-4 h-4 ml-2" /> : <ChevronDown className="w-4 h-4 ml-2" />}
+        <Button type="button" onClick={() => navigate('/groups')}>
+          <Plus className="w-5 h-5 mr-2" />
+          {t('expenses.newExpense')}
         </Button>
       </div>
 
-      <Card className="p-4">
-        <div className="space-y-4">
-          <div className="relative">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
-            <input 
-              type="text" 
-              placeholder={t('expenses.searchPlaceholderFull')}
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full pl-10 pr-4 py-3 bg-slate-50 border border-slate-100 rounded-2xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 transition-all"
-            />
-          </div>
+      <div className="grid grid-cols-1 gap-6 md:grid-cols-4 md:gap-8">
+        {/* Três cartões de filtros à esquerda — lado a lado com a lista a partir de md (~768px) */}
+        <aside className="space-y-4 md:col-span-1 md:sticky md:top-4 md:max-w-full md:self-start">
+          <Card className="rounded-3xl border border-slate-100 p-5 shadow-sm">
+            <h3 className="mb-4 font-bold text-slate-900">{t('expenses.filterCardStatus')}</h3>
+            <div className="flex flex-wrap gap-2">
+              <button type="button" onClick={() => selectStatusChip('all')}>
+                <Badge
+                  variant="slate"
+                  className={`cursor-pointer transition-opacity ${isStatusChipActive('all') ? '' : 'opacity-40'}`}
+                >
+                  {t('expenses.filterChipAll')}
+                </Badge>
+              </button>
+              <button type="button" onClick={() => selectStatusChip('confirmed')}>
+                <Badge
+                  variant="green"
+                  className={`cursor-pointer transition-opacity ${isStatusChipActive('confirmed') ? '' : 'opacity-40'}`}
+                >
+                  {t('expenses.filterChipConfirmed')}
+                </Badge>
+              </button>
+              <button type="button" onClick={() => selectStatusChip('draft')}>
+                <Badge
+                  variant="yellow"
+                  className={`cursor-pointer transition-opacity ${isStatusChipActive('draft') ? '' : 'opacity-40'}`}
+                >
+                  {t('expenses.filterChipDraft')}
+                </Badge>
+              </button>
+            </div>
+          </Card>
 
-          <AnimatePresence>
-            {showFilters && (
-              <motion.div 
-                initial={{ height: 0, opacity: 0 }}
-                animate={{ height: 'auto', opacity: 1 }}
-                exit={{ height: 0, opacity: 0 }}
-                className="overflow-hidden"
+          <Card className="rounded-3xl border border-slate-100 p-5 shadow-sm">
+            <h3 className="mb-4 font-bold text-slate-900">{t('expenses.filterCardGroup')}</h3>
+            <div className="relative">
+              <Users className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+              <select
+                value={selectedGroupId}
+                onChange={(e) => setSelectedGroupId(e.target.value)}
+                className="w-full appearance-none rounded-xl border border-slate-100 bg-slate-50 py-2.5 pl-10 pr-4 text-sm transition-all focus:outline-none focus:ring-2 focus:ring-blue-500/20"
               >
-                <div className="grid grid-cols-1 md:grid-cols-4 gap-4 pt-4 border-t border-slate-100">
-                  <div className="space-y-1.5">
-                    <label className="text-xs font-bold text-slate-500 uppercase tracking-wider ml-1">{t('expenses.group')}</label>
-                    <div className="relative">
-                      <Users className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-                      <select 
-                        value={selectedGroupId}
-                        onChange={(e) => setSelectedGroupId(e.target.value)}
-                        className="w-full pl-10 pr-4 py-2.5 bg-slate-50 border border-slate-100 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 transition-all appearance-none"
-                      >
-                        <option value="all">{t('expenses.allGroups')}</option>
-                        {groups.map(group => (
-                          <option key={group.id} value={group.id}>{group.name}</option>
-                        ))}
-                      </select>
-                    </div>
-                  </div>
+                <option value="all">{t('expenses.allGroups')}</option>
+                {groups.map((group) => (
+                  <option key={group.id} value={group.id}>
+                    {group.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </Card>
 
-                  <div className="space-y-1.5">
-                    <label className="text-xs font-bold text-slate-500 uppercase tracking-wider ml-1">{t('expenses.status')}</label>
-                    <select
-                      value={selectedStatus}
-                      onChange={(e) => setSelectedStatus(e.target.value as 'all' | 'draft' | 'confirmed')}
-                      className="w-full px-4 py-2.5 bg-slate-50 border border-slate-100 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 transition-all"
-                    >
-                      <option value="all">{t('expenses.allStatuses')}</option>
-                      <option value="confirmed">{t('expenses.confirmedSection')}</option>
-                      <option value="draft">{t('expenses.draftSection')}</option>
-                    </select>
-                  </div>
-
-                  <div className="space-y-1.5">
-                    <label className="text-xs font-bold text-slate-500 uppercase tracking-wider ml-1">{t('expenses.fromDate')}</label>
-                    <div className="relative">
-                      <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-                      <input 
-                        type="date" 
-                        value={startDate}
-                        onChange={(e) => setStartDate(e.target.value)}
-                        className="w-full pl-10 pr-4 py-2.5 bg-slate-50 border border-slate-100 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 transition-all"
-                      />
-                    </div>
-                  </div>
-
-                  <div className="space-y-1.5">
-                    <label className="text-xs font-bold text-slate-500 uppercase tracking-wider ml-1">{t('expenses.toDate')}</label>
-                    <div className="relative">
-                      <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-                      <input 
-                        type="date" 
-                        value={endDate}
-                        onChange={(e) => setEndDate(e.target.value)}
-                        className="w-full pl-10 pr-4 py-2.5 bg-slate-50 border border-slate-100 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 transition-all"
-                      />
-                    </div>
-                  </div>
-                </div>
-                <div className="flex justify-end mt-4">
-                  <Button 
-                    variant="ghost" 
-                    size="sm" 
-                    onClick={() => {
-                      setSearchQuery('');
-                      setSelectedGroupId('all');
-                      setSelectedStatus('all');
-                      setStartDate('');
-                      setEndDate('');
-                    }}
-                  >
-                    {t('expenses.resetFilters')}
-                  </Button>
-                </div>
-              </motion.div>
-            )}
-          </AnimatePresence>
-        </div>
-      </Card>
-
-      <div className="space-y-4">
-        {filteredExpenses.length > 0 ? (
-          filteredExpenses.map((expense: ExpenseListRow) => (
-            <Card
-              key={expense.id}
-              className={`transition-shadow p-0 overflow-hidden ${
-                canEditExpense(expense) ? 'hover:shadow-md cursor-pointer' : 'cursor-default'
-              }`}
-              onClick={canEditExpense(expense) ? () => openEditModal(expense) : undefined}
-            >
-              <div className="flex items-center p-6 gap-6">
-                {(() => {
-                  const matched = classifyExpenseTitle(expense.title);
-                  return (
-                    <div className="w-12 h-12 bg-blue-50 rounded-2xl flex items-center justify-center text-blue-600 shrink-0">
-                      {matched ? (
-                        <span className="text-2xl" aria-hidden>
-                          {matched.icon}
-                        </span>
-                      ) : (
-                        <CreditCard className="w-6 h-6" />
-                      )}
-                    </div>
-                  );
-                })()}
-                
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 mb-1">
-                    <h4 className="text-lg font-bold text-slate-900 truncate">{expense.title}</h4>
-                    <Badge variant="slate" size="sm">
-                      {groups.find(g => g.id === expense.group_id)?.name || t('expenses.unknownGroup')}
-                    </Badge>
-                    {expense.event?.title && (
-                      <Badge variant="blue" size="sm">
-                        {expense.event.title}
-                      </Badge>
-                    )}
-                  </div>
-                  <div className="flex items-center gap-4 text-sm text-slate-500">
-                    <span className="flex items-center gap-1">
-                      <Calendar className="w-3.5 h-3.5" />
-                      {formatDateOnly(expense.incurred_at, locale)}
-                    </span>
-                    <span className="flex items-center gap-1">
-                      <Users className="w-3.5 h-3.5" />
-                      {t('expenses.paidBy', { name: expense.profiles?.full_name || '—' })}
-                    </span>
-                  </div>
-                  {expense.description && (
-                    <p className="text-sm text-slate-400 mt-2 line-clamp-1">{expense.description}</p>
-                  )}
-                </div>
-
-                <div className="text-right shrink-0">
-                  <p className="text-xl font-bold text-slate-900">
-                    {formatCurrency(expense.amount_cents, expense.currency)}
-                  </p>
-                  <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mt-1">
-                    {t('expenses.splitMethod', { method: expense.split_method })}
-                  </p>
+          <Card className="rounded-3xl border border-slate-100 p-5 shadow-sm">
+            <h3 className="mb-4 font-bold text-slate-900">{t('expenses.filterCardDateRange')}</h3>
+            <div className="space-y-4">
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold uppercase tracking-wider text-slate-500">
+                  {t('expenses.fromDate')}
+                </label>
+                <div className="relative">
+                  <Calendar className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                  <input
+                    type="date"
+                    value={startDate}
+                    onChange={(e) => setStartDate(e.target.value)}
+                    className="w-full rounded-xl border border-slate-100 bg-slate-50 py-2.5 pl-10 pr-4 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                  />
                 </div>
               </div>
-            </Card>
-          ))
-        ) : (
-          <div className="flex flex-col items-center justify-center py-20 text-slate-400 bg-white rounded-3xl border border-dashed border-slate-200">
-            <div className="w-16 h-16 bg-slate-50 rounded-2xl flex items-center justify-center mb-4">
-              <Search className="w-8 h-8" />
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold uppercase tracking-wider text-slate-500">
+                  {t('expenses.toDate')}
+                </label>
+                <div className="relative">
+                  <Calendar className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                  <input
+                    type="date"
+                    value={endDate}
+                    onChange={(e) => setEndDate(e.target.value)}
+                    className="w-full rounded-xl border border-slate-100 bg-slate-50 py-2.5 pl-10 pr-4 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                  />
+                </div>
+              </div>
+              <div className="flex justify-end border-t border-slate-100 pt-4">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  type="button"
+                  onClick={() => {
+                    setSearchQuery('');
+                    setSelectedGroupId('all');
+                    setSelectedStatus('all');
+                    setStartDate('');
+                    setEndDate('');
+                  }}
+                >
+                  {t('expenses.resetFilters')}
+                </Button>
+              </div>
             </div>
-            <h3 className="text-lg font-bold text-slate-900 mb-1">{t('expenses.empty')}</h3>
+          </Card>
+        </aside>
+
+        {/* Pesquisa + lista à direita */}
+        <div className="min-w-0 space-y-6 md:col-span-3">
+          <Card className="rounded-3xl border border-slate-100 p-4 shadow-sm">
+            <p className="mb-3 text-sm font-semibold text-slate-800">{t('expenses.searchResultsHeading')}</p>
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+              <input
+                type="text"
+                placeholder={t('expenses.searchPlaceholderFull')}
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="w-full rounded-xl border border-slate-100 bg-slate-50 py-2.5 pl-10 pr-4 text-sm transition-all focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+              />
+            </div>
+          </Card>
+
+      <div className="space-y-6">
+        {filteredExpenses.length > 0 ? (
+          <>
+            {recentExpenses.length > 0 && (
+              <div>
+                <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3">
+                  {t('expenses.recentSection')}
+                </h4>
+                <div className="grid grid-cols-1 gap-4">
+                  {recentExpenses.map((e) => (
+                    <React.Fragment key={e.id}>{renderExpenseCard(e)}</React.Fragment>
+                  ))}
+                </div>
+              </div>
+            )}
+            {olderExpenses.length > 0 && (
+              <div>
+                <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3">
+                  {t('expenses.olderSection')}
+                </h4>
+                <div className="grid grid-cols-1 gap-4">
+                  {olderExpenses.map((e) => (
+                    <React.Fragment key={e.id}>{renderExpenseCard(e)}</React.Fragment>
+                  ))}
+                </div>
+              </div>
+            )}
+          </>
+        ) : (
+          <div className="flex flex-col items-center justify-center rounded-3xl border border-dashed border-slate-200 bg-white py-20 text-slate-400">
+            <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-slate-50">
+              <Search className="h-8 w-8" />
+            </div>
+            <h3 className="mb-1 text-lg font-bold text-slate-900">{t('expenses.empty')}</h3>
             <p>{t('expenses.emptyHint')}</p>
           </div>
         )}
+      </div>
+        </div>
       </div>
 
       <Modal
@@ -568,6 +793,17 @@ export function ExpensesPage({ session }: ExpensesPageProps) {
             value={editDescription}
             onChange={(e) => setEditDescription(e.target.value)}
             placeholder={t('expenseForm.descriptionPlaceholder')}
+          />
+          <ExpenseReceiptSection
+            attachmentInputRef={editReceiptAttachmentInputRef}
+            receiptFile={editReceiptFile}
+            receiptPreviewUrl={editReceiptPreviewUrl}
+            storedReceiptPreviewUrl={storedReceiptSignedUrl}
+            onAttachmentInputChange={handleEditReceiptAttachmentChange}
+            onRemoveReceipt={handleEditRemoveReceipt}
+            onOcrInterestClick={handleEditOcrInterestClick}
+            disablePhoto={actionLoading}
+            disableOcr={actionLoading}
           />
           <div className="space-y-1">
             <label className="block text-sm font-semibold text-slate-700">{t('groupExpense.expenseStatusLabel')}</label>

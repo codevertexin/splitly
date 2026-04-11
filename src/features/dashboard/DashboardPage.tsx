@@ -33,7 +33,7 @@ import { Modal } from '../../components/ui/Modal';
 import { CreateExpenseForm } from '../expenses/components/CreateExpenseForm';
 import { formatCurrencyCents, formatDateOnly } from '../../lib/dateTime';
 import { isAccountingEligibleExpense } from '../../lib/accountingExpenses';
-import { notifyExpensesChanged } from '../../lib/expenseEvents';
+import { EXPENSES_CHANGED_EVENT, notifyExpensesChanged } from '../../lib/expenseEvents';
 import {
   buildSettlementSuggestionsForUser,
   type SettlementSuggestionRow,
@@ -43,6 +43,85 @@ import { trackProductEvent } from '../../lib/productTracking';
 interface DashboardPageProps {
   session: Session;
 }
+
+/** Signed net (cents) for current user: receive − pay across raw suggestion rows. */
+function signedNetFromRows(rows: SettlementSuggestionRow[]): number {
+  return rows.reduce(
+    (s, r) => s + (r.direction === 'receive' ? r.amount_cents : -r.amount_cents),
+    0,
+  );
+}
+
+function signedNetFromRowsEdited(
+  rows: SettlementSuggestionRow[],
+  edited: Record<string, number>,
+): number {
+  return rows.reduce((s, r) => {
+    const amt = Math.max(0, edited[r.key] ?? r.amount_cents);
+    return s + (r.direction === 'receive' ? amt : -amt);
+  }, 0);
+}
+
+/**
+ * Scales underlying raw rows so their signed net equals `targetSigned` (cents).
+ * Preserves per-row positive amounts suitable for `settlements` insert.
+ * When `amountByKey` is set, uses those amounts as weights (e.g. after inline edits).
+ */
+function distributeNetAcrossRows(
+  rows: SettlementSuggestionRow[],
+  targetSigned: number,
+  amountByKey?: Record<string, number>,
+): Record<string, number> {
+  const amt = (r: SettlementSuggestionRow) => Math.max(0, amountByKey?.[r.key] ?? r.amount_cents);
+  const originalSigned = rows.reduce(
+    (s, r) => s + (r.direction === 'receive' ? amt(r) : -amt(r)),
+    0,
+  );
+  if (originalSigned === 0 || rows.length === 0) return {};
+
+  const items = rows.map((r) => {
+    const s = r.direction === 'receive' ? amt(r) : -amt(r);
+    const exact = (targetSigned * s) / originalSigned;
+    const floor = Math.floor(exact);
+    return { key: r.key, floor, frac: exact - floor };
+  });
+  let remainder = targetSigned - items.reduce((sum, it) => sum + it.floor, 0);
+  items.sort((a, b) => b.frac - a.frac);
+  let rIdx = 0;
+  while (remainder !== 0 && items.length > 0 && rIdx < items.length * 20) {
+    const d = remainder > 0 ? 1 : -1;
+    items[rIdx % items.length].floor += d;
+    remainder -= d;
+    rIdx += 1;
+  }
+  const out: Record<string, number> = {};
+  for (const it of items) {
+    out[it.key] = Math.max(0, Math.abs(it.floor));
+  }
+  return out;
+}
+
+type NettedPersonSettlementGroup = {
+  personKey: string;
+  counterparty_id: string;
+  counterparty_name: string;
+  direction: 'pay' | 'receive';
+  rows: SettlementSuggestionRow[];
+};
+
+type NettedCounterpartyInGroup = {
+  netKey: string;
+  counterparty_id: string;
+  counterparty_name: string;
+  direction: 'pay' | 'receive';
+  rows: SettlementSuggestionRow[];
+};
+
+type NettedGroupSection = {
+  group_id: string;
+  group_name: string;
+  counterpartyNets: NettedCounterpartyInGroup[];
+};
 
 export function DashboardPage({ session }: DashboardPageProps) {
   const { t, i18n } = useTranslation();
@@ -68,6 +147,16 @@ export function DashboardPage({ session }: DashboardPageProps) {
   const [settlingLoading, setSettlingLoading] = useState(false);
   const [settlingError, setSettlingError] = useState<string | null>(null);
   const [profileNamesById, setProfileNamesById] = useState<Record<string, string>>({});
+  const [settlements, setSettlements] = useState<
+  Array<{
+    id: string;
+    group_id: string;
+    from_user_id: string;
+    to_user_id: string;
+    amount_cents: number;
+    deleted_at: string | null;
+  }>
+>([]);
   const [settleViewMode, setSettleViewMode] = useState<'person' | 'group'>('person');
   const [expandedGroupIds, setExpandedGroupIds] = useState<Record<string, boolean>>({});
   const [createExpenseOpen, setCreateExpenseOpen] = useState(false);
@@ -75,6 +164,7 @@ export function DashboardPage({ session }: DashboardPageProps) {
   const [selectedGroupId, setSelectedGroupId] = useState<string>('');
   const [associateTo, setAssociateTo] = useState<'group' | 'event'>('group');
   const [selectedEventId, setSelectedEventId] = useState<string>('');
+  
   const defaultGroupId = useMemo(() => {
     if (!groups.length) return null;
     const lastGroupId = localStorage.getItem('splitly_last_group_id');
@@ -109,11 +199,64 @@ export function DashboardPage({ session }: DashboardPageProps) {
     if (!stillOpen) setSelectedEventId('');
   }, [openEvents, selectedEventId]);
 
+  React.useEffect(() => {
+    let cancelled = false;
+  
+    const fetchSettlements = async () => {
+      if (!groups.length) {
+        setSettlements([]);
+        return;
+      }
+  
+      const groupIds = groups.map((g) => g.id);
+  
+      const { data, error } = await supabase
+        .from('settlements')
+        .select('id, group_id, from_user_id, to_user_id, amount_cents, deleted_at')
+        .in('group_id', groupIds)
+        .is('deleted_at', null);
+  
+      if (cancelled) return;
+      if (error) {
+        console.error('Dashboard settlements fetch failed:', error);
+        setSettlements([]);
+        return;
+      }
+  
+      setSettlements((data || []) as Array<{
+        id: string;
+        group_id: string;
+        from_user_id: string;
+        to_user_id: string;
+        amount_cents: number;
+        deleted_at: string | null;
+      }>);
+    };
+  
+    void fetchSettlements();
+  
+    const onChanged = () => {
+      void fetchSettlements();
+    };
+  
+    window.addEventListener('group-settlement-confirmed', onChanged as EventListener);
+    window.addEventListener(EXPENSES_CHANGED_EVENT, onChanged as EventListener);
+  
+    return () => {
+      cancelled = true;
+      window.removeEventListener('group-settlement-confirmed', onChanged as EventListener);
+      window.removeEventListener(EXPENSES_CHANGED_EVENT, onChanged as EventListener);
+    };
+  }, [groups]);
+
   const groupBalances = useMemo(() => {
     const map = new Map<string, number>();
+  
     for (const expense of expenses) {
       if (!isAccountingEligibleExpense(expense)) continue;
+  
       const current = map.get(expense.group_id) || 0;
+  
       if (expense.paid_by_user_id === session.user.id) {
         let delta = 0;
         for (const split of expense.splits || []) {
@@ -126,8 +269,20 @@ export function DashboardPage({ session }: DashboardPageProps) {
         map.set(expense.group_id, current - (mySplit?.share_cents || 0));
       }
     }
+  
+    for (const settlement of settlements) {
+      const current = map.get(settlement.group_id) || 0;
+      const amt = settlement.amount_cents || 0;
+  
+      if (settlement.from_user_id === session.user.id) {
+        map.set(settlement.group_id, current + amt);
+      } else if (settlement.to_user_id === session.user.id) {
+        map.set(settlement.group_id, current - amt);
+      }
+    }
+  
     return map;
-  }, [expenses, session.user.id]);
+  }, [expenses, settlements, session.user.id]);
 
   const totalToReceiveCents = useMemo(
     () => Array.from(groupBalances.values()).reduce((sum, value) => sum + (value > 0 ? value : 0), 0),
@@ -206,8 +361,9 @@ export function DashboardPage({ session }: DashboardPageProps) {
     return buildSettlementSuggestionsForUser(expenses, session.user.id, {
       groupNameById,
       profileNamesById,
+      settlements,
     });
-  }, [expenses, groups, profileNamesById, session.user.id]);
+  }, [expenses, groups, profileNamesById, session.user.id, settlements]);
 
   const [selectedSettlementKeys, setSelectedSettlementKeys] = useState<string[]>([]);
   const [editedAmountsByKey, setEditedAmountsByKey] = useState<Record<string, number>>({});
@@ -220,90 +376,121 @@ export function DashboardPage({ session }: DashboardPageProps) {
     return Math.round(amount * 100);
   };
 
-  const groupedSettlementSuggestions = useMemo(() => {
-    const byPerson = new Map<
-      string,
-      {
-        personKey: string;
-        counterparty_id: string;
-        counterparty_name: string;
-        direction: 'pay' | 'receive';
-        rows: SettlementSuggestionRow[];
-      }
-    >();
+  const personNetByCounterparty = useMemo(() => {
+    const m = new Map<string, number>();
     for (const row of settlementSuggestions) {
-      const personKey = `${row.direction}:${row.counterparty_id}`;
-      const existing = byPerson.get(personKey);
-      if (existing) {
-        existing.rows.push(row);
-      } else {
-        byPerson.set(personKey, {
-          personKey,
-          counterparty_id: row.counterparty_id,
-          counterparty_name: row.counterparty_name,
-          direction: row.direction,
-          rows: [row],
-        });
-      }
+      const v = row.direction === 'receive' ? row.amount_cents : -row.amount_cents;
+      m.set(row.counterparty_id, (m.get(row.counterparty_id) ?? 0) + v);
     }
-    return Array.from(byPerson.values()).map((group) => ({
-      ...group,
-      rows: group.rows.sort((a, b) => b.amount_cents - a.amount_cents),
-    }));
+    return m;
   }, [settlementSuggestions]);
 
-  const groupedByGroupSuggestions = useMemo(() => {
-    const byGroup = new Map<
-      string,
-      {
-        group_id: string;
-        group_name: string;
-        rows: SettlementSuggestionRow[];
-      }
-    >();
+  const groupLocalNetByGroupCounterparty = useMemo(() => {
+    const m = new Map<string, number>();
     for (const row of settlementSuggestions) {
-      const existing = byGroup.get(row.group_id);
-      if (existing) {
-        existing.rows.push(row);
-      } else {
-        byGroup.set(row.group_id, {
-          group_id: row.group_id,
-          group_name: row.group_name,
-          rows: [row],
-        });
-      }
+      const k = `${row.group_id}:${row.counterparty_id}`;
+      const v = row.direction === 'receive' ? row.amount_cents : -row.amount_cents;
+      m.set(k, (m.get(k) ?? 0) + v);
     }
-    return Array.from(byGroup.values()).map((group) => ({
-      ...group,
-      rows: group.rows.sort((a, b) => b.amount_cents - a.amount_cents),
-    }));
+    return m;
   }, [settlementSuggestions]);
 
-  const personTotalByKey = useMemo(() => {
-    const totals: Record<string, number> = {};
-    for (const group of groupedSettlementSuggestions) {
-      totals[group.personKey] = group.rows.reduce(
-        (sum, row) => sum + Math.max(0, editedAmountsByKey[row.key] ?? row.amount_cents),
-        0,
+  const visibleSettlementKeys = useMemo(() => {
+    const keys = new Set<string>();
+    for (const row of settlementSuggestions) {
+      const pn = personNetByCounterparty.get(row.counterparty_id) ?? 0;
+      const gk = `${row.group_id}:${row.counterparty_id}`;
+      const gn = groupLocalNetByGroupCounterparty.get(gk) ?? 0;
+      if (pn !== 0 || gn !== 0) keys.add(row.key);
+    }
+    return keys;
+  }, [settlementSuggestions, personNetByCounterparty, groupLocalNetByGroupCounterparty]);
+
+  const nettedPersonGroups = useMemo((): NettedPersonSettlementGroup[] => {
+    const byCp = new Map<string, SettlementSuggestionRow[]>();
+    for (const row of settlementSuggestions) {
+      if ((personNetByCounterparty.get(row.counterparty_id) ?? 0) === 0) continue;
+      const list = byCp.get(row.counterparty_id) ?? [];
+      list.push(row);
+      byCp.set(row.counterparty_id, list);
+    }
+    const out: NettedPersonSettlementGroup[] = [];
+    for (const [counterparty_id, rows] of byCp) {
+      const net = signedNetFromRows(rows);
+      if (net === 0) continue;
+      out.push({
+        personKey: `person:${counterparty_id}`,
+        counterparty_id,
+        counterparty_name: rows[0].counterparty_name,
+        direction: net > 0 ? 'receive' : 'pay',
+        rows: [...rows].sort((a, b) => b.amount_cents - a.amount_cents),
+      });
+    }
+    return out.sort(
+      (a, b) => Math.abs(signedNetFromRows(b.rows)) - Math.abs(signedNetFromRows(a.rows)),
+    );
+  }, [settlementSuggestions, personNetByCounterparty]);
+
+  const nettedByGroup = useMemo((): NettedGroupSection[] => {
+    const byGroup = new Map<string, SettlementSuggestionRow[]>();
+    for (const row of settlementSuggestions) {
+      const list = byGroup.get(row.group_id) ?? [];
+      list.push(row);
+      byGroup.set(row.group_id, list);
+    }
+    const sections: NettedGroupSection[] = [];
+    for (const [, allRows] of byGroup) {
+      const group_id = allRows[0].group_id;
+      const byCp = new Map<string, SettlementSuggestionRow[]>();
+      for (const row of allRows) {
+        const gk = `${row.group_id}:${row.counterparty_id}`;
+        if ((groupLocalNetByGroupCounterparty.get(gk) ?? 0) === 0) continue;
+        const list = byCp.get(row.counterparty_id) ?? [];
+        list.push(row);
+        byCp.set(row.counterparty_id, list);
+      }
+      const counterpartyNets: NettedCounterpartyInGroup[] = [];
+      for (const [cpid, rows] of byCp) {
+        const net = signedNetFromRows(rows);
+        if (net === 0) continue;
+        counterpartyNets.push({
+          netKey: `${group_id}:${cpid}`,
+          counterparty_id: cpid,
+          counterparty_name: rows[0].counterparty_name,
+          direction: net > 0 ? 'receive' : 'pay',
+          rows: [...rows].sort((a, b) => b.amount_cents - a.amount_cents),
+        });
+      }
+      counterpartyNets.sort(
+        (a, b) => Math.abs(signedNetFromRows(b.rows)) - Math.abs(signedNetFromRows(a.rows)),
       );
+      if (counterpartyNets.length === 0) continue;
+      sections.push({
+        group_id,
+        group_name: allRows[0].group_name,
+        counterpartyNets,
+      });
     }
-    return totals;
-  }, [editedAmountsByKey, groupedSettlementSuggestions]);
+    return sections.sort((a, b) => a.group_name.localeCompare(b.group_name));
+  }, [settlementSuggestions, groupLocalNetByGroupCounterparty]);
 
   const groupTotalById = useMemo(() => {
     const totals: Record<string, number> = {};
-    for (const group of groupedByGroupSuggestions) {
-      totals[group.group_id] = group.rows.reduce(
+    for (const section of nettedByGroup) {
+      const allRaw = section.counterpartyNets.flatMap((n) => n.rows);
+      totals[section.group_id] = allRaw.reduce(
         (sum, row) => sum + Math.max(0, editedAmountsByKey[row.key] ?? row.amount_cents),
         0,
       );
     }
     return totals;
-  }, [editedAmountsByKey, groupedByGroupSuggestions]);
+  }, [editedAmountsByKey, nettedByGroup]);
 
   React.useEffect(() => {
     if (!showSettleModal) return;
-    setSelectedSettlementKeys(settlementSuggestions.map((row) => row.key));
+    setSelectedSettlementKeys(
+      settlementSuggestions.filter((row) => visibleSettlementKeys.has(row.key)).map((row) => row.key),
+    );
     setEditedAmountsByKey(
       settlementSuggestions.reduce<Record<string, number>>((acc, row) => {
         acc[row.key] = row.amount_cents;
@@ -318,43 +505,35 @@ export function DashboardPage({ session }: DashboardPageProps) {
       }, {}),
     );
     setSettlingError(null);
-  }, [showSettleModal, settlementSuggestions]);
+  }, [showSettleModal, settlementSuggestions, visibleSettlementKeys]);
 
   const updatePersonTotal = useCallback(
     (personKey: string, totalCents: number) => {
-      const group = groupedSettlementSuggestions.find((g) => g.personKey === personKey);
+      const group = nettedPersonGroups.find((g) => g.personKey === personKey);
       if (!group || group.rows.length === 0) return;
-      const originalTotal = group.rows.reduce((sum, row) => sum + row.amount_cents, 0);
-      if (originalTotal <= 0) return;
-
-      const capped = Math.max(0, totalCents);
-      const provisional = group.rows.map((row) => {
-        const exact = (capped * row.amount_cents) / originalTotal;
-        const floor = Math.floor(exact);
-        return { key: row.key, floor, frac: exact - floor };
+      setEditedAmountsByKey((prev) => {
+        const signed = signedNetFromRowsEdited(group.rows, prev);
+        if (signed === 0) return prev;
+        const capped = Math.max(0, totalCents);
+        const targetSigned = signed >= 0 ? capped : -capped;
+        const next = distributeNetAcrossRows(group.rows, targetSigned, prev);
+        return { ...prev, ...next };
       });
-      let remainder = capped - provisional.reduce((sum, p) => sum + p.floor, 0);
-      provisional.sort((a, b) => b.frac - a.frac);
-      const next: Record<string, number> = {};
-      for (const item of provisional) next[item.key] = item.floor;
-      for (let i = 0; i < provisional.length && remainder > 0; i += 1) {
-        next[provisional[i].key] += 1;
-        remainder -= 1;
-      }
-      setEditedAmountsByKey((prev) => ({ ...prev, ...next }));
     },
-    [groupedSettlementSuggestions],
+    [nettedPersonGroups],
   );
 
   const updateGroupTotal = useCallback(
     (groupId: string, totalCents: number) => {
-      const group = groupedByGroupSuggestions.find((g) => g.group_id === groupId);
-      if (!group || group.rows.length === 0) return;
-      const originalTotal = group.rows.reduce((sum, row) => sum + row.amount_cents, 0);
+      const section = nettedByGroup.find((g) => g.group_id === groupId);
+      if (!section) return;
+      const groupRows = section.counterpartyNets.flatMap((n) => n.rows);
+      if (groupRows.length === 0) return;
+      const originalTotal = groupRows.reduce((sum, row) => sum + row.amount_cents, 0);
       if (originalTotal <= 0) return;
 
       const capped = Math.max(0, totalCents);
-      const provisional = group.rows.map((row) => {
+      const provisional = groupRows.map((row) => {
         const exact = (capped * row.amount_cents) / originalTotal;
         const floor = Math.floor(exact);
         return { key: row.key, floor, frac: exact - floor };
@@ -369,7 +548,27 @@ export function DashboardPage({ session }: DashboardPageProps) {
       }
       setEditedAmountsByKey((prev) => ({ ...prev, ...next }));
     },
-    [groupedByGroupSuggestions],
+    [nettedByGroup],
+  );
+
+  const updateCounterpartyNetInGroup = useCallback(
+    (netKey: string, totalCents: number) => {
+      let target: NettedCounterpartyInGroup | undefined;
+      for (const section of nettedByGroup) {
+        target = section.counterpartyNets.find((n) => n.netKey === netKey);
+        if (target) break;
+      }
+      if (!target || target.rows.length === 0) return;
+      setEditedAmountsByKey((prev) => {
+        const signed = signedNetFromRowsEdited(target.rows, prev);
+        if (signed === 0) return prev;
+        const capped = Math.max(0, totalCents);
+        const targetSigned = signed >= 0 ? capped : -capped;
+        const next = distributeNetAcrossRows(target.rows, targetSigned, prev);
+        return { ...prev, ...next };
+      });
+    },
+    [nettedByGroup],
   );
 
   const handleConfirmSettlements = useCallback(async () => {
@@ -915,6 +1114,7 @@ export function DashboardPage({ session }: DashboardPageProps) {
                     ? t('dashboard.quickExpenseNoOpenEventsDisabled')
                     : t('dashboard.quickExpenseSelectEventDisabled')
             }
+            scanReceiptInterestSource="dashboard"
             session={session}
             onSuccess={() => {
               setCreateExpenseOpen(false);
@@ -957,16 +1157,23 @@ export function DashboardPage({ session }: DashboardPageProps) {
               {t('dashboard.settleByGroup')}
             </button>
           </div>
-          {settlementSuggestions.length === 0 ? (
+          {settlementSuggestions.length === 0 || visibleSettlementKeys.size === 0 ? (
             <p className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-6 text-sm text-slate-600">
               {t('dashboard.settleModalEmpty')}
             </p>
           ) : (
             <div className="space-y-2 max-h-[20rem] overflow-y-auto pr-1">
+              {settleViewMode === 'person' && nettedPersonGroups.length === 0 && (
+                <p className="rounded-lg border border-slate-100 bg-slate-50 px-3 py-2 text-sm text-slate-600">
+                  {t('dashboard.settleByPersonNoNet')}
+                </p>
+              )}
               {settleViewMode === 'person' &&
-                groupedSettlementSuggestions.map((group) => {
+                nettedPersonGroups.map((group) => {
                   const allSelected = group.rows.every((row) => selectedSettlementKeys.includes(row.key));
-                  const groupTotal = personTotalByKey[group.personKey] ?? 0;
+                  const signed = signedNetFromRowsEdited(group.rows, editedAmountsByKey);
+                  const displayDir = signed >= 0 ? 'receive' : 'pay';
+                  const groupTotal = Math.abs(signed);
                   return (
                     <div key={group.personKey} className="rounded-xl border border-slate-200 bg-white p-3">
                       <div className="flex items-start gap-3">
@@ -984,7 +1191,7 @@ export function DashboardPage({ session }: DashboardPageProps) {
                         />
                         <div className="min-w-0 flex-1">
                           <p className="text-sm font-semibold text-slate-900">
-                            {group.direction === 'pay'
+                            {displayDir === 'pay'
                               ? t('dashboard.settleModalPayLine', {
                                   amount: formatCurrencyCents(groupTotal),
                                   name: group.counterparty_name,
@@ -1051,12 +1258,13 @@ export function DashboardPage({ session }: DashboardPageProps) {
                   );
                 })}
               {settleViewMode === 'group' &&
-                groupedByGroupSuggestions.map((group) => {
-                  const isExpanded = expandedGroupIds[group.group_id] ?? true;
-                  const allSelected = group.rows.every((row) => selectedSettlementKeys.includes(row.key));
-                  const groupTotal = groupTotalById[group.group_id] ?? 0;
+                nettedByGroup.map((section) => {
+                  const sectionRows = section.counterpartyNets.flatMap((n) => n.rows);
+                  const isExpanded = expandedGroupIds[section.group_id] ?? true;
+                  const allSelected = sectionRows.every((row) => selectedSettlementKeys.includes(row.key));
+                  const groupTotal = groupTotalById[section.group_id] ?? 0;
                   return (
-                    <div key={group.group_id} className="rounded-xl border border-slate-200 bg-white p-3">
+                    <div key={section.group_id} className="rounded-xl border border-slate-200 bg-white p-3">
                       <div className="flex items-start gap-3">
                         <input
                           type="checkbox"
@@ -1064,9 +1272,9 @@ export function DashboardPage({ session }: DashboardPageProps) {
                           checked={allSelected}
                           onChange={() => {
                             setSelectedSettlementKeys((prev) => {
-                              const withoutGroup = prev.filter((k) => !group.rows.some((r) => r.key === k));
+                              const withoutGroup = prev.filter((k) => !sectionRows.some((r) => r.key === k));
                               if (allSelected) return withoutGroup;
-                              return [...withoutGroup, ...group.rows.map((r) => r.key)];
+                              return [...withoutGroup, ...sectionRows.map((r) => r.key)];
                             });
                           }}
                         />
@@ -1074,13 +1282,16 @@ export function DashboardPage({ session }: DashboardPageProps) {
                           <button
                             type="button"
                             onClick={() =>
-                              setExpandedGroupIds((prev) => ({ ...prev, [group.group_id]: !(prev[group.group_id] ?? true) }))
+                              setExpandedGroupIds((prev) => ({
+                                ...prev,
+                                [section.group_id]: !(prev[section.group_id] ?? true),
+                              }))
                             }
                             className="flex w-full items-center justify-between gap-2 text-left"
                           >
                             <p className="text-sm font-semibold text-slate-900">
                               {t('dashboard.settleInGroupLine', {
-                                group: group.group_name,
+                                group: section.group_name,
                                 amount: formatCurrencyCents(groupTotal),
                               })}
                             </p>
@@ -1099,56 +1310,113 @@ export function DashboardPage({ session }: DashboardPageProps) {
                                 if (cents == null) {
                                   return;
                                 }
-                                updateGroupTotal(group.group_id, cents);
+                                updateGroupTotal(section.group_id, cents);
                               }}
                               className="w-28 rounded-md border border-slate-200 bg-slate-50 px-2 py-1 text-sm text-right"
                             />
                             <span className="text-xs text-slate-500">EUR</span>
                           </div>
                           {isExpanded && (
-                            <div className="mt-2 space-y-1.5">
-                              {group.rows.map((row) => {
-                                const selected = selectedSettlementKeys.includes(row.key);
-                                const amount = Math.max(0, editedAmountsByKey[row.key] ?? row.amount_cents);
+                            <div className="mt-2 space-y-3">
+                              {section.counterpartyNets.map((cn) => {
+                                const cnSigned = signedNetFromRowsEdited(cn.rows, editedAmountsByKey);
+                                const cnDir = cnSigned >= 0 ? 'receive' : 'pay';
+                                const cnLineTotal = Math.abs(cnSigned);
+                                const cnAllSelected = cn.rows.every((r) => selectedSettlementKeys.includes(r.key));
                                 return (
-                                  <label
-                                    key={row.key}
-                                    className={`flex items-center gap-2 rounded-lg border px-2 py-1.5 ${
-                                      selected ? 'border-blue-200 bg-blue-50/50' : 'border-slate-200 bg-slate-50'
-                                    }`}
+                                  <div
+                                    key={cn.netKey}
+                                    className="rounded-lg border border-slate-100 bg-slate-50/90 p-2.5 space-y-2"
                                   >
-                                    <input
-                                      type="checkbox"
-                                      className="rounded border-slate-300 text-blue-600 focus:ring-blue-500"
-                                      checked={selected}
-                                      onChange={() =>
-                                        setSelectedSettlementKeys((prev) =>
-                                          prev.includes(row.key) ? prev.filter((k) => k !== row.key) : [...prev, row.key],
-                                        )
-                                      }
-                                    />
-                                    <span className="min-w-0 flex-1 text-xs text-slate-700">
-                                      {row.direction === 'pay'
-                                        ? t('dashboard.settleModalPayLine', {
-                                            amount: formatCurrencyCents(amount),
-                                            name: row.counterparty_name,
-                                          })
-                                        : t('dashboard.settleModalReceiveLine', {
-                                            amount: formatCurrencyCents(amount),
-                                            name: row.counterparty_name,
+                                    <div className="flex items-start gap-2">
+                                      <input
+                                        type="checkbox"
+                                        className="mt-0.5 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+                                        checked={cnAllSelected}
+                                        onChange={() => {
+                                          setSelectedSettlementKeys((prev) => {
+                                            const without = prev.filter((k) => !cn.rows.some((r) => r.key === k));
+                                            if (cnAllSelected) return without;
+                                            return [...without, ...cn.rows.map((r) => r.key)];
+                                          });
+                                        }}
+                                      />
+                                      <div className="min-w-0 flex-1 space-y-1.5">
+                                        <p className="text-xs font-semibold text-slate-800">
+                                          {cnDir === 'pay'
+                                            ? t('dashboard.settleModalPayLine', {
+                                                amount: formatCurrencyCents(cnLineTotal),
+                                                name: cn.counterparty_name,
+                                              })
+                                            : t('dashboard.settleModalReceiveLine', {
+                                                amount: formatCurrencyCents(cnLineTotal),
+                                                name: cn.counterparty_name,
+                                              })}
+                                        </p>
+                                        <div className="flex items-center gap-2">
+                                          <input
+                                            type="text"
+                                            value={(cnLineTotal / 100).toFixed(2)}
+                                            onChange={(e) => {
+                                              const cents = parseMoneyToCents(e.target.value);
+                                              if (cents == null) return;
+                                              updateCounterpartyNetInGroup(cn.netKey, cents);
+                                            }}
+                                            className="w-24 rounded-md border border-slate-200 bg-white px-2 py-1 text-xs text-right"
+                                          />
+                                          <span className="text-[10px] text-slate-500">EUR</span>
+                                        </div>
+                                        <div className="space-y-1">
+                                          {cn.rows.map((row) => {
+                                            const selected = selectedSettlementKeys.includes(row.key);
+                                            const amount = Math.max(0, editedAmountsByKey[row.key] ?? row.amount_cents);
+                                            return (
+                                              <label
+                                                key={row.key}
+                                                className={`flex items-center gap-2 rounded-md border px-2 py-1 ${
+                                                  selected ? 'border-blue-200 bg-blue-50/50' : 'border-slate-200 bg-white'
+                                                }`}
+                                              >
+                                                <input
+                                                  type="checkbox"
+                                                  className="rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+                                                  checked={selected}
+                                                  onChange={() =>
+                                                    setSelectedSettlementKeys((prev) =>
+                                                      prev.includes(row.key)
+                                                        ? prev.filter((k) => k !== row.key)
+                                                        : [...prev, row.key],
+                                                    )
+                                                  }
+                                                />
+                                                <span className="min-w-0 flex-1 text-[11px] text-slate-600">
+                                                  {row.direction === 'pay'
+                                                    ? t('dashboard.settleModalPayLine', {
+                                                        amount: formatCurrencyCents(amount),
+                                                        name: row.counterparty_name,
+                                                      })
+                                                    : t('dashboard.settleModalReceiveLine', {
+                                                        amount: formatCurrencyCents(amount),
+                                                        name: row.counterparty_name,
+                                                      })}
+                                                </span>
+                                                <input
+                                                  type="text"
+                                                  value={(amount / 100).toFixed(2)}
+                                                  onChange={(e) => {
+                                                    const cents = parseMoneyToCents(e.target.value);
+                                                    if (cents == null) return;
+                                                    setEditedAmountsByKey((prev) => ({ ...prev, [row.key]: cents }));
+                                                  }}
+                                                  className="w-20 rounded border border-slate-200 bg-white px-1.5 py-0.5 text-[11px] text-right"
+                                                />
+                                              </label>
+                                            );
                                           })}
-                                    </span>
-                                    <input
-                                      type="text"
-                                      value={(amount / 100).toFixed(2)}
-                                      onChange={(e) => {
-                                        const cents = parseMoneyToCents(e.target.value);
-                                        if (cents == null) return;
-                                        setEditedAmountsByKey((prev) => ({ ...prev, [row.key]: cents }));
-                                      }}
-                                      className="w-24 rounded-md border border-slate-200 bg-white px-2 py-1 text-xs text-right"
-                                    />
-                                  </label>
+                                        </div>
+                                      </div>
+                                    </div>
+                                  </div>
                                 );
                               })}
                             </div>
@@ -1172,7 +1440,7 @@ export function DashboardPage({ session }: DashboardPageProps) {
               className="flex-[2]"
               onClick={() => void handleConfirmSettlements()}
               loading={settlingLoading}
-              disabled={settlementSuggestions.length === 0}
+              disabled={settlementSuggestions.length === 0 || visibleSettlementKeys.size === 0}
             >
               {t('dashboard.settleModalConfirm')}
             </Button>

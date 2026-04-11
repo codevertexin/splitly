@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router-dom';
 import {
@@ -40,6 +40,14 @@ interface GroupDetailProps {
   membersLoading: boolean;
   expenses: GroupExpenseRow[];
   allExpenses: GroupExpenseRow[];
+  settlements: Array<{
+    id: string;
+    group_id: string;
+    from_user_id: string;
+    to_user_id: string;
+    amount_cents: number;
+    settled_at: string;
+  }>;
   expensesLoading: boolean;
   yourBalanceCents: number;
   balanceLoading: boolean;
@@ -49,7 +57,7 @@ interface GroupDetailProps {
   canAddExpense: boolean;
   addExpenseDisabledHint?: string;
   onBack: () => void;
-  onSettleUp: () => Promise<void>;
+  onSettleUp: (targetUserId?: string, amountCents?: number, targetName?: string) => Promise<void>;
   /** Loading state for confirm "Settle debts" only (optional; falls back to actionLoading). */
   settleActionLoading?: boolean;
   settleFeedback?: { type: 'success' | 'error'; message: string } | null;
@@ -180,6 +188,7 @@ function eventStatusLabel(status: string, t: (k: string) => string) {
 
 export function GroupDetail({
   group,
+  settlements,
   members,
   membersLoading,
   expenses,
@@ -221,9 +230,14 @@ export function GroupDetail({
 }: GroupDetailProps) {
   const settleBusy = settleActionLoading ?? actionLoading;
   const { t, i18n } = useTranslation();
-  const navigate = useNavigate();
-  const [showSettleConfirm, setShowSettleConfirm] = useState(false);
-  const [showSettleHelp, setShowSettleHelp] = useState(false);
+const navigate = useNavigate();
+const [showSettleConfirm, setShowSettleConfirm] = useState(false);
+const [showSettleHelp, setShowSettleHelp] = useState(false);
+const [selectedSettleRow, setSelectedSettleRow] = useState<{
+  targetUserId: string;
+  amountCents: number;
+  targetName: string;
+} | null>(null);
   const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({});
   const sectionStateKey = `splitly_group_expanded_sections_v2_${group.id}`;
   const [filterEventId, setFilterEventId] = useState<string>('all');
@@ -233,6 +247,8 @@ export function GroupDetail({
   const [draftLimit, setDraftLimit] = useState(PAGE_CHUNK);
   const [detailTab, setDetailTab] = useState<'overview' | 'expenses' | 'members'>('overview');
   const [memberSearch, setMemberSearch] = useState('');
+  /** After navigating to a group, apply default tab once the expense list has loaded. */
+  const pendingInitialTabRef = useRef(true);
 
   const locale =
     i18n.language === 'pt-BR'
@@ -301,10 +317,33 @@ export function GroupDetail({
     [confirmedVisibleFlat, t],
   );
 
-  const pairwiseRows = useMemo(
-    () => computePairwiseNetVsMe(currentUserId, members, expenses),
-    [currentUserId, members, expenses],
-  );
+  const pairwiseRows = useMemo(() => {
+    const baseRows = computePairwiseNetVsMe(currentUserId, members, expenses);
+    const settlementDeltaByUserId = new Map<string, number>();
+  
+    for (const settlement of settlements) {
+      if (settlement.from_user_id === currentUserId) {
+        settlementDeltaByUserId.set(
+          settlement.to_user_id,
+          (settlementDeltaByUserId.get(settlement.to_user_id) || 0) - settlement.amount_cents,
+        );
+      }
+  
+      if (settlement.to_user_id === currentUserId) {
+        settlementDeltaByUserId.set(
+          settlement.from_user_id,
+          (settlementDeltaByUserId.get(settlement.from_user_id) || 0) + settlement.amount_cents,
+        );
+      }
+    }
+  
+    return baseRows
+      .map((row) => ({
+        ...row,
+        netIOCents: row.netIOCents + (settlementDeltaByUserId.get(row.member.user_id) || 0),
+      }))
+      .filter((row) => row.netIOCents !== 0);
+  }, [currentUserId, members, expenses, settlements]);
 
   const youOweThem = useMemo(
     () => pairwiseRows.filter((r) => r.netIOCents > 0).sort((a, b) => b.netIOCents - a.netIOCents),
@@ -384,13 +423,38 @@ export function GroupDetail({
   }, [filterEventId, filterMemberId, statusFilter, group.id]);
 
   useEffect(() => {
-    setDetailTab('overview');
+    pendingInitialTabRef.current = true;
     setMemberSearch('');
   }, [group.id]);
 
+  const hasExpensesForGroup = useMemo(
+    () => allExpenses.some((e) => e.group_id === group.id),
+    [allExpenses, group.id],
+  );
+
+  useEffect(() => {
+    if (expensesLoading || !pendingInitialTabRef.current) return;
+    pendingInitialTabRef.current = false;
+    setDetailTab((current) => {
+      if (current !== 'overview') return current;
+      return hasExpensesForGroup ? 'expenses' : 'overview';
+    });
+  }, [group.id, expensesLoading, hasExpensesForGroup]);
+
   const handleSettleUp = async () => {
-    await onSettleUp();
+    if (!selectedSettleRow) {
+      setShowSettleConfirm(false);
+      return;
+    }
+  
+    await onSettleUp(
+      selectedSettleRow.targetUserId,
+      selectedSettleRow.amountCents,
+      selectedSettleRow.targetName,
+    );
+  
     setShowSettleConfirm(false);
+    setSelectedSettleRow(null);
   };
 
   const formatEventDates = (ev: NonNullable<GroupExpenseRow['event']>) => {
@@ -419,14 +483,16 @@ export function GroupDetail({
 
     return (
       <motion.li
-        layout
-        key={`${sectionPrefix}-${expense.id}`}
-        className={`group flex cursor-pointer items-center gap-3 rounded-xl border px-3 py-2.5 shadow-sm transition-all sm:gap-4 sm:px-4 sm:py-3 ${
-          readOnlyDraft
-            ? 'border-amber-200/90 bg-amber-50/90 hover:bg-amber-50'
-            : 'border-slate-100/90 bg-white hover:border-slate-200 hover:bg-white'
-        }`}
-        onClick={() => editable && onEditExpense(expense)}
+  layout
+  key={`${sectionPrefix}-${expense.id}`}
+  className={`group flex cursor-pointer items-center gap-3 rounded-xl border px-3 py-2.5 shadow-sm transition-all sm:gap-4 sm:px-4 sm:py-3 ${
+    readOnlyDraft
+  ? 'border-amber-200/90 bg-amber-50/90 hover:bg-amber-50'
+  : editable
+    ? 'border-sky-200 bg-sky-50 hover:bg-sky-100 hover:border-sky-300'
+    : 'border-slate-100/90 bg-white hover:border-slate-200'
+  }`}
+  onClick={() => editable && onEditExpense(expense)}
         onKeyDown={(e) => {
           if (editable && (e.key === 'Enter' || e.key === ' ')) {
             e.preventDefault();
@@ -470,9 +536,11 @@ export function GroupDetail({
           </p>
         </div>
         <span className="shrink-0 font-bold tabular-nums text-slate-900">{formatMoney(expense.amount_cents)}</span>
-        {editable && (
-          <span className="hidden text-xs font-semibold text-blue-600 group-hover:inline sm:inline">{t('expenseForm.editAction')}</span>
-        )}
+          {editable && (
+  <span className="hidden text-xs font-semibold text-sky-700 group-hover:inline sm:inline">
+    {t('expenseForm.editAction')}
+  </span>
+)}
       </motion.li>
     );
   };
@@ -486,6 +554,7 @@ export function GroupDetail({
     const expandKey = `${prefix}:${sectionKey}`;
     const isExpanded = expandedSections[expandKey] ?? true;
     const ev = section.eventMeta;
+    const sectionHasEditableExpense = section.expenses.some((e) => canEditExpense(e));
 
     return (
       <div
@@ -497,10 +566,12 @@ export function GroupDetail({
         <button
           type="button"
           onClick={() => toggleSection(prefix, sectionKey)}
-          className={`flex w-full items-start gap-3 border-b px-4 py-4 text-left transition-colors sm:gap-4 sm:px-5 sm:py-4 ${
+          className={`group flex cursor-pointer items-center gap-3 rounded-xl border px-3 py-2.5 shadow-sm transition-all sm:gap-4 sm:px-4 sm:py-3 ${
             readOnlyDraft
-              ? 'border-amber-200/80 bg-amber-50/90 hover:bg-amber-50'
-              : 'border-slate-200/90 bg-slate-50/95 hover:bg-slate-50'
+              ? 'border-amber-200/90 bg-amber-50/90 hover:bg-amber-50'
+              : sectionHasEditableExpense
+                ? 'border-sky-200 bg-sky-50 hover:bg-sky-100 hover:border-sky-300'
+                : 'border-slate-100/90 bg-white hover:border-slate-200'
           }`}
         >
           <div className="min-w-0 flex-1">
@@ -530,26 +601,26 @@ export function GroupDetail({
                   : t('groupDetail.participantsCount', { count: section.participantIds.size })}
             </p>
             {ev && (ev.starts_at || ev.ends_at) && (
-              <p className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-slate-500">
-                <span className="inline-flex items-center gap-1">
-                  <Calendar className="h-3 w-3" />
-                  {formatEventDates(ev)}
-                </span>
-                {onNavigateToEvent && ev.id && (
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onNavigateToEvent(ev.id);
-                    }}
-                    className="inline-flex items-center gap-0.5 font-semibold text-blue-600 hover:text-blue-700"
-                  >
-                    {t('groupDetail.viewEvent')}
-                    <ExternalLink className="h-3 w-3" />
-                  </button>
-                )}
-              </p>
-            )}
+  <p className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-slate-500">
+    <span className="inline-flex items-center gap-1">
+      <Calendar className="h-3 w-3" />
+      {formatEventDates(ev)}
+    </span>
+    {onNavigateToEvent && ev.id && (
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          onNavigateToEvent(ev.id);
+        }}
+        className="inline-flex items-center gap-0.5 font-semibold text-blue-600 hover:text-blue-700"
+      >
+        {t('groupDetail.viewEvent')}
+        <ExternalLink className="h-3 w-3" />
+      </button>
+    )}
+  </p>
+)}
           </div>
           <div className="flex shrink-0 items-center gap-3">
             {isExpanded ? (
@@ -653,30 +724,48 @@ export function GroupDetail({
               {t('groupDetail.invite')}
             </Button>
           </div>
-
           <AnimatePresence>
-            {showSettleConfirm && (
-              <motion.div
-                initial={{ opacity: 0, y: -10 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -10 }}
-                className="mb-6 flex items-center gap-3 rounded-2xl border border-green-100 bg-green-50 p-4"
-              >
-                <div className="flex-1">
-                  <p className="text-sm font-bold text-green-900">{t('groupDetail.confirmSettleTitle')}</p>
-                  <p className="text-xs text-green-700">{t('groupDetail.confirmSettleBody')}</p>
-                </div>
-                <div className="flex gap-2">
-                  <Button onClick={() => setShowSettleConfirm(false)} variant="outline" size="sm">
-                    <X className="h-4 w-4" />
-                  </Button>
-                  <Button onClick={handleSettleUp} disabled={settleBusy} loading={settleBusy} variant="success" size="sm">
-                    {t('groupDetail.confirm')}
-                  </Button>
-                </div>
-              </motion.div>
-            )}
-          </AnimatePresence>
+  {showSettleConfirm && (
+    <motion.div
+      initial={{ opacity: 0, y: -10 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, y: -10 }}
+      className="mb-6 flex items-center gap-3 rounded-2xl border border-green-100 bg-green-50 p-4"
+    >
+      <div className="flex-1">
+        <p className="text-sm font-bold text-green-900">
+          {t('groupDetail.confirmSettleTitle')}
+        </p>
+        <p className="text-xs text-green-700">
+  {selectedSettleRow
+    ? `Vamos pedir a ${selectedSettleRow.targetName} para confirmar que recebeu ${formatMoney(selectedSettleRow.amountCents)}. Os saldos só serão atualizados depois da confirmação.`
+    : 'Vamos pedir confirmação do pagamento. Os saldos só serão atualizados depois da confirmação.'}
+</p>
+      </div>
+      <div className="flex gap-2">
+        <Button
+          onClick={() => {
+            setShowSettleConfirm(false);
+            setSelectedSettleRow(null);
+          }}
+          variant="outline"
+          size="sm"
+        >
+          <X className="h-4 w-4" />
+        </Button>
+        <Button
+          onClick={handleSettleUp}
+          disabled={settleBusy}
+          loading={settleBusy}
+          variant="success"
+          size="sm"
+        >
+          {t('groupDetail.confirm')}
+        </Button>
+      </div>
+    </motion.div>
+  )}
+</AnimatePresence>
 
           {membersError && (
             <div className="mb-6 rounded-2xl border border-red-100 bg-red-50 p-4 text-sm text-red-800">{membersError}</div>
@@ -816,7 +905,10 @@ export function GroupDetail({
             {!showSettleConfirm && yourBalanceCents !== 0 && (
               <Button
                 type="button"
-                onClick={() => setShowSettleConfirm(true)}
+                onClick={() => {
+                  setSelectedSettleRow(null);
+                  setShowSettleConfirm(true);
+                }}
                 className={`mt-4 w-full py-3.5 text-base font-bold shadow-lg ring-2 border ${
                   yourBalanceCents > 0
                     ? 'border-emerald-900/15 bg-emerald-700 text-white shadow-emerald-950/25 ring-emerald-800/20 hover:bg-emerald-800'
@@ -943,42 +1035,47 @@ export function GroupDetail({
                       </div>
                     )}
                     {youOweThem.length > 0 && (
-                      <div className="rounded-2xl border border-red-200/80 bg-red-50/40 p-4 sm:p-5">
-                        <p className="mb-3 text-sm font-bold text-red-900">{t('groupDetail.sectionYouOwe')}</p>
-                        <ul className="space-y-2.5">
-                          {youOweThem.map((row) => (
-                            <li
-                              key={row.member.user_id}
-                              className="flex flex-wrap items-center gap-2 rounded-xl border border-red-100/90 bg-white/90 px-3.5 py-3 shadow-sm sm:gap-3 sm:px-4"
-                            >
-                              <MemberAvatar
-                                userId={row.member.user_id}
-                                fullName={row.member.full_name}
-                                avatarUrl={row.member.avatar_url}
-                                size="sm"
-                                className="shrink-0"
-                              />
-                              <p className="min-w-0 flex-1 text-base font-medium leading-snug text-red-950">
-                                {t('groupDetail.youOweFull', {
-                                  name: memberLabel(row.member),
-                                  amount: formatMoney(row.netIOCents),
-                                })}
-                              </p>
-                              <button
-                                type="button"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  setShowSettleConfirm(true);
-                                }}
-                                className="shrink-0 rounded-lg border border-red-300/90 bg-white px-3 py-1.5 text-xs font-semibold text-red-950 shadow-sm transition-colors hover:bg-red-50"
-                              >
-                                {t('groupDetail.rowSettle')}
-                              </button>
-                            </li>
-                          ))}
-                        </ul>
-                      </div>
-                    )}
+  <div className="rounded-2xl border border-red-200/80 bg-red-50/40 p-4 sm:p-5">
+    <p className="mb-3 text-sm font-bold text-red-900">{t('groupDetail.sectionYouOwe')}</p>
+    <ul className="space-y-2.5">
+      {youOweThem.map((row) => (
+        <li
+          key={row.member.user_id}
+          className="flex flex-wrap items-center gap-2 rounded-xl border border-red-100/90 bg-white/90 px-3.5 py-3 shadow-sm sm:gap-3 sm:px-4"
+        >
+          <MemberAvatar
+            userId={row.member.user_id}
+            fullName={row.member.full_name}
+            avatarUrl={row.member.avatar_url}
+            size="sm"
+            className="shrink-0"
+          />
+          <p className="min-w-0 flex-1 text-base font-medium leading-snug text-red-950">
+            {t('groupDetail.youOweFull', {
+              name: memberLabel(row.member),
+              amount: formatMoney(row.netIOCents),
+            })}
+          </p>
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              setSelectedSettleRow({
+                targetUserId: row.member.user_id,
+                amountCents: row.netIOCents,
+                targetName: memberLabel(row.member),
+              });
+              setShowSettleConfirm(true);
+            }}
+            className="shrink-0 rounded-lg border border-red-300/90 bg-white px-3 py-1.5 text-xs font-semibold text-red-950 shadow-sm transition-colors hover:bg-red-50"
+          >
+            {t('groupDetail.rowSettle')}
+          </button>
+        </li>
+      ))}
+    </ul>
+  </div>
+)}
                   </div>
                 )}
                 {pairwiseRows.length === 0 && balanceLoading && (

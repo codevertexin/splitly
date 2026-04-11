@@ -5,7 +5,6 @@ import { Button } from './ui/Button';
 import { Input } from './ui/Input';
 import type { ProfileSaveFields, ProfileSaveResult } from '../hooks/useUserProfile';
 import type { Profile } from '../types';
-import { hasValidSocialDisplayName } from '../lib/displayName';
 
 interface ProfileNameGateProps {
   profile: Profile | null;
@@ -19,21 +18,36 @@ export function ProfileNameGate({ profile, loading, saving, saveProfileFields }:
   const [name, setName] = useState('');
   const [error, setError] = useState<string | null>(null);
 
-  const needsName = Boolean(profile && !hasValidSocialDisplayName(profile));
+  // Gate apenas para utilizadores antigos que já têm username,
+  // mas ainda não têm full_name válido.
+  const needsName = Boolean(
+    profile &&
+      (!profile.full_name?.trim() || profile.full_name.trim().length < 2) &&
+      profile.username?.trim() &&
+      profile.username.trim().length >= 3
+  );
+
   const open = !loading && needsName;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
+
     const trimmed = name.trim();
     if (trimmed.length < 2) {
       setError(t('profileNameGate.nameTooShort'));
       return;
     }
+
     if (!profile) return;
 
+    if (!profile.username?.trim()) {
+      setError(t('profileNameGate.saveFailed'));
+      return;
+    }
+
     const result = await saveProfileFields({
-      username: profile.username ?? '',
+      username: profile.username.trim(),
       full_name: trimmed,
       default_currency: profile.default_currency || 'EUR',
       timezone: profile.timezone || 'UTC',
@@ -41,7 +55,8 @@ export function ProfileNameGate({ profile, loading, saving, saveProfileFields }:
     });
 
     if (!result.success) {
-      setError(result.error || t('profileNameGate.saveFailed'));
+      setError('error' in result ? result.error : t('profileNameGate.saveFailed'));
+      return;
     }
   };
 
@@ -62,7 +77,9 @@ export function ProfileNameGate({ profile, loading, saving, saveProfileFields }:
           minLength={2}
         />
         {error && (
-          <div className="rounded-xl border border-red-100 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>
+          <div className="rounded-xl border border-red-100 bg-red-50 px-3 py-2 text-sm text-red-700">
+            {error}
+          </div>
         )}
         <Button type="submit" className="w-full" disabled={saving} loading={saving}>
           {t('profileNameGate.continue')}

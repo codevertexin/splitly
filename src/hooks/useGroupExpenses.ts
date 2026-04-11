@@ -3,9 +3,11 @@ import { Session } from '@supabase/supabase-js';
 import { supabase } from '../lib/supabase';
 import { EXPENSES_CHANGED_EVENT, expensesChangedAffectsGroup, notifyExpensesChanged } from '../lib/expenseEvents';
 import { filterAccountingEligibleExpenses } from '../lib/accountingExpenses';
+import { buildCreateExpenseV2Payload, type ExpenseSplitMethod } from '../lib/expenseV2Payload';
 import { Expense } from '../types';
 
 export type GroupExpenseRow = Expense & {
+  affects_balances?: boolean | null;
   profiles?: { full_name: string | null; avatar_url: string | null; username: string | null } | null;
   event?: {
     id: string;
@@ -19,10 +21,11 @@ export type GroupExpenseRow = Expense & {
 
 export type CreateExpenseInput = {
   title: string;
+  description?: string | null;
   amount_cents: number;
   paid_by_user_id: string;
   participant_ids: string[];
-  split_method: 'equal' | 'manual' | 'percentage';
+  split_method: 'equal' | 'manual' | 'percentage' | 'settlement_aware';
   splits?: Array<{ user_id: string; share_cents?: number; percentage?: number }>;
   /** Defaults to confirmed when omitted (matches create-expense edge function). */
   status?: 'draft' | 'confirmed';
@@ -57,7 +60,26 @@ export function useGroupExpenses(session: Session | null, groupId: string | unde
       const { data, error: qError } = await supabase
         .from('expenses')
         .select(
-          '*, profiles!expenses_paid_by_user_id_fkey(full_name, avatar_url, username), event:events(id, title, status, starts_at, ends_at), splits:expense_splits(user_id, share_cents, percentage)',
+          `
+            id,
+            group_id,
+            event_id,
+            title,
+            description,
+            amount_cents,
+            currency,
+            paid_by_user_id,
+            receipt_path,
+            status,
+            affects_balances,
+            incurred_at,
+            created_at,
+            updated_at,
+            deleted_at,
+            profiles:profiles!expenses_paid_by_user_id_fkey(full_name, avatar_url, username),
+            event:events(id, title, status, starts_at, ends_at),
+            splits:expense_splits(user_id, share_cents, percentage)
+          `,
         )
         .eq('group_id', groupId)
         .is('deleted_at', null)
@@ -70,7 +92,14 @@ export function useGroupExpenses(session: Session | null, groupId: string | unde
         const profile = Array.isArray(prof) ? prof[0] : prof;
         const ev = row.event;
         const event = Array.isArray(ev) ? ev[0] : ev;
-        return { ...row, profiles: profile ?? null, event: event ?? null, splits: row.splits ?? [] } as GroupExpenseRow;
+      
+        return {
+          ...row,
+          affects_balances: row.affects_balances ?? null,
+          profiles: profile ?? null,
+          event: event ?? null,
+          splits: row.splits ?? [],
+        } as GroupExpenseRow;
       });
       setAllExpenses(rows);
       /** Accounting-only subset (balances, pairwise, “confirmed” list in group UI). Full list: `allExpenses`. */
@@ -106,22 +135,20 @@ export function useGroupExpenses(session: Session | null, groupId: string | unde
 
     setActionLoading(true);
     try {
-      const body = {
-        group_id: groupId,
-        title: input.title.trim(),
-        amount_cents: input.amount_cents,
-        currency: 'EUR',
-        paid_by_user_id: input.paid_by_user_id,
-        participant_ids: input.participant_ids,
-        split_method: input.split_method,
+      const body = buildCreateExpenseV2Payload({
+        groupId,
+        eventId: null, // ligar ao contexto de evento quando este hook for reutilizado aí
+        title: input.title,
+        description: input.description,
+        amountCents: input.amount_cents,
+        paidByUserId: input.paid_by_user_id,
+        participantIds: input.participant_ids,
+        splitMethod: input.split_method as ExpenseSplitMethod,
         splits: input.splits,
-        status: input.status ?? 'confirmed',
-      };
-      if (import.meta.env.DEV) {
-        console.log('[create-expense] payload', body);
-      }
-
-      const { data, error: fnError } = await supabase.functions.invoke('create-expense', {
+        status: input.status,
+      });
+      
+      const { data, error: fnError } = await supabase.functions.invoke('create-expense-v2', {
         body,
         headers: {
           Authorization: `Bearer ${session.access_token}`,
@@ -144,13 +171,14 @@ export function useGroupExpenses(session: Session | null, groupId: string | unde
         throw new Error(String((data as { error: string }).error));
       }
 
+      const createdPayload = data as { expense?: { id: string } } | null;
+      const expenseId = createdPayload?.expense?.id;
+
       if (
         import.meta.env.DEV &&
         input.split_method === 'manual' &&
         input.splits?.length
       ) {
-        const created = data as { expense?: { id: string } } | null;
-        const expenseId = created?.expense?.id;
         if (expenseId) {
           const splitsIn = input.splits.filter(
             (s): s is { user_id: string; share_cents: number } =>
@@ -186,7 +214,7 @@ export function useGroupExpenses(session: Session | null, groupId: string | unde
 
       await fetchExpenses();
       notifyExpensesChanged({ groupId });
-      return { success: true as const };
+      return { success: true as const, expenseId };
     } catch (err: any) {
       const msg = err.message || 'Failed to create expense';
       return { success: false as const, error: msg };
@@ -201,46 +229,54 @@ export function useGroupExpenses(session: Session | null, groupId: string | unde
       title: string;
       amount_cents: number;
       description: string | null;
-      split_method: 'equal' | 'manual' | 'percentage';
+      split_method: 'equal' | 'manual' | 'percentage' | 'settlement_aware';
       participant_ids: string[];
       splits?: Array<{ user_id: string; share_cents?: number; percentage?: number }>;
       status: 'draft' | 'confirmed';
+      /** Omit to leave unchanged; `null` clears stored receipt path after storage deletes. */
+      receipt_path?: string | null;
     }
   ) => {
     if (!session || !groupId) {
       return { success: false as const, error: 'Missing session or group' };
     }
-
+  
     setActionLoading(true);
+  
     try {
-      const { data, error: fnError } = await supabase.functions.invoke('update-expense', {
-        body: {
-          expense_id: expenseId,
-          title: input.title,
-          description: input.description,
-          amount_cents: input.amount_cents,
-          split_method: input.split_method,
-          participant_ids: input.participant_ids,
-          splits: input.splits,
-          status: input.status,
-        },
+      const body: Record<string, unknown> = {
+        expense_id: expenseId,
+        title: input.title,
+        description: input.description,
+        amount_cents: input.amount_cents,
+        requested_split_method: input.split_method,
+        participant_ids: input.participant_ids,
+        splits: input.splits,
+        status_intent: input.status,
+      };
+      if (Object.prototype.hasOwnProperty.call(input, 'receipt_path')) {
+        body.receipt_path = input.receipt_path ?? null;
+      }
+  
+      console.log('[update-expense-v2] body', body);
+  
+      const { data, error: fnError } = await supabase.functions.invoke('update-expense-v2', {
+        body,
         headers: {
           Authorization: `Bearer ${session.access_token}`,
         },
       });
-
+  
+      console.log('[update-expense-v2] response', data, fnError);
+  
       if (fnError) {
-        let msg = fnError.message;
-        if (data && typeof data === 'object' && data !== null && 'error' in data) {
-          const e = (data as { error?: string }).error;
-          if (e) msg = e;
-        }
-        throw new Error(msg);
+        throw fnError;
       }
-      if (data && typeof data === 'object' && data !== null && 'error' in data && (data as { error?: string }).error) {
-        throw new Error(String((data as { error: string }).error));
+  
+      if (data && typeof data === 'object' && 'error' in data && data.error) {
+        throw new Error(String(data.error));
       }
-
+  
       await fetchExpenses();
       notifyExpensesChanged({ groupId });
       return { success: true as const };

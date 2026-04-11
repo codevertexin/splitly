@@ -35,7 +35,11 @@
     "confirmEmail": "Confira seu e-mail para o link de confirmação!",
     "displayName": "Seu nome",
     "displayNamePlaceholder": "Como os amigos te veem",
-    "displayNameTooShort": "Digite um nome com pelo menos 2 caracteres."
+    "displayNameTooShort": "Digite um nome com pelo menos 2 caracteres.",
+    "username": "Nome de utilizador",
+    "usernamePlaceholder": "ex: ricardo.matias",
+    "usernameTooShort": "O nome de utilizador deve ter pelo menos 3 caracteres.",
+    "usernameInvalid": "Use apenas letras minúsculas, números, ponto ou underscore."
   },
   "layout": {
     "nav": {
@@ -74,6 +78,58 @@
   "common": {
     "cancel": "Cancelar"
   },
+  "billing": {
+    "upgradeFeatureFallback": "este recurso",
+    "upgradeTitle": "Faça upgrade para usar {{feature}}",
+    "upgradeSubtitle": "Escolha um plano para desbloquear recursos premium. Você pode mudar ou cancelar quando quiser.",
+    "upgradeBenefit1": "Recursos premium na sua conta",
+    "upgradeBenefit2": "Funciona nos seus grupos e dispositivos",
+    "upgradeBenefit3": "Pagamento seguro",
+    "planTierFree": "Grátis",
+    "planTierPro": "Pro",
+    "planTierPremium": "Premium",
+    "priceTierFree": "0 €",
+    "priceTierPro": "9 € / mês",
+    "priceTierPremium": "19 € / mês",
+    "detailTierPro": "Ideal para a maioria dos grupos",
+    "planProMonthly": "Pro — Mensal",
+    "planProYearly": "Pro — Anual",
+    "planPremiumMonthly": "Premium — Mensal",
+    "priceProMonthly": "9 € / mês",
+    "priceProYearly": "79 € / ano",
+    "pricePremiumMonthly": "19 € / mês",
+    "detailProYearly": "Melhor custo-benefício",
+    "recommendedBadge": "Recomendado",
+    "ctaCheckout": "Ir para o pagamento",
+    "ctaDismiss": "Agora não",
+    "featureLabels": {
+      "scan_receipt": "Ler o recibo automaticamente",
+      "scanReceiptHint": "Fotografe o recibo e o Splitly preenche a despesa para você.",
+      "example_unreleased_premium": "Exemplo de recurso premium a lançar",
+      "example_gated_premium": "Exemplo de recurso premium"
+    },
+    "interestModal": {
+      "titleFallback": "Em breve",
+      "body": "Este recurso premium ainda não foi lançado. Deixe seus dados e avisaremos quando estiver disponível.",
+      "bodyScanReceipt": "Estamos desenvolvendo a leitura automática de recibos: você tira uma foto e o Splitly preenche a despesa. Deixe seu e-mail e avisaremos quando estiver pronto.",
+      "emailLabel": "E-mail (opcional)",
+      "emailPlaceholder": "voce@exemplo.com",
+      "messageLabel": "Mensagem (opcional)",
+      "messagePlaceholder": "Para que você usaria isso?",
+      "submitError": "Algo deu errado",
+      "successBody": "Obrigado — avisaremos quando este recurso estiver disponível.",
+      "close": "Fechar",
+      "notifyMe": "Avise-me",
+      "alreadyRegisteredBanner": "Você já está na lista de espera",
+      "alreadyRegisteredBody": "Já registramos seu interesse neste recurso. Avisaremos por e-mail quando ele for lançado — não é preciso se inscrever de novo."
+    },
+    "upgradeSuccess": {
+      "title": "Bem-vindo ao Premium",
+      "body": "Sua assinatura está ativa. Você pode continuar o que começamos — executamos para você.",
+      "later": "Depois",
+      "continue": "Continuar"
+    }
+  },
   "expenseSuggestions": {
     "hotel": "Hospedagem / Hotel",
     "meal": "Jantar / Almoço",
@@ -95,12 +151,31 @@
     "eventNotFound": "Evento não encontrado ou não está mais disponível.",
     "eventGroupMismatch": "Esse evento não pertence ao grupo selecionado.",
     "createFailed": "Não foi possível adicionar a despesa",
+    "sessionRequired": "Entre novamente para criar despesas.",
     "updateFailed": "Não foi possível atualizar a despesa",
     "submit": "Adicionar despesa",
     "saveChanges": "Salvar alterações",
     "editTitle": "Editar despesa",
     "editAction": "Editar despesa",
-    "onboardingFirstExpenseTip": "Dica: divida esta despesa com outras pessoas - nós cuidamos dos saldos automaticamente."
+    "onboardingFirstExpenseTip": "Dica: divida esta despesa com outras pessoas - nós cuidamos dos saldos automaticamente.",
+    "receiptSectionHeading": "Recibo",
+    "receiptPhotoTitle": "Adicionar foto do recibo",
+    "receiptPhotoHint": "Anexe uma foto como comprovante desta despesa. Ela é enviada ao guardar.",
+    "receiptPhotoButton": "Escolher foto",
+    "receiptPhotoReplace": "Substituir",
+    "receiptPhotoRemove": "Remover",
+    "receiptPendingUploadNote": "Será enviada ao guardar esta despesa.",
+    "receiptSavedFileLabel": "Recibo guardado",
+    "receiptUploadFailed": "A despesa foi guardada, mas a foto do recibo não pôde ser enviada. Podes adicioná-la ao editar a despesa.",
+    "dictationStart": "Ditar texto",
+    "dictationStop": "Parar ditado",
+    "dictationListening": "A ouvir… fale agora.",
+    "dictationError": "O reconhecimento de voz não está disponível ou a permissão foi negada. Podes continuar a escrever à mão.",
+    "receiptOcrTitle": "Ler o recibo automaticamente",
+    "receiptOcrHint": "Tire uma foto do recibo e o Splitly preenche os dados da despesa para você.",
+    "receiptOcrCta": "Avise-me",
+    "receiptBadgePro": "Pro",
+    "receiptBadgeComingSoon": "Em breve"
   },
   "settings": {
     "title": "Configurações",
@@ -180,6 +255,7 @@
     "settleInGroupLine": "{{group}} · {{amount}}",
     "settleModalSubtitle": "Com base nos saldos atuais, estes são os pagamentos sugeridos. Selecione o que você quer registrar agora.",
     "settleModalEmpty": "Não há acertos pendentes no momento.",
+    "settleByPersonNoNet": "Não há saldo líquido por pessoa entre grupos. Use “Acertar por grupo” para acertar dentro de cada grupo.",
     "settleModalPayLine": "Pagar {{amount}} para {{name}}",
     "settleModalReceiveLine": "Receber {{amount}} de {{name}}",
     "settleModalSelectAtLeastOne": "Selecione pelo menos um acerto.",
@@ -331,7 +407,13 @@
     "closeBlockedOk": "Entendi",
     "invalidPayer": "Escolha quem pagou",
     "timelineToday": "Hoje",
-    "timelineYesterday": "Ontem"
+    "timelineYesterday": "Ontem",
+    "rsvpBannerTitle": "Confirme sua presença",
+    "rsvpBannerBody": "Você foi convidado a este evento. Indique se vai participar.",
+    "rsvpGoing": "Eu vou",
+    "rsvpNotGoing": "Não vou",
+    "rsvpNotGoingHint": "Você indicou que não vai. Pode mudar de ideia a qualquer momento.",
+    "rsvpError": "Não foi possível atualizar a resposta."
   },
   "help": {
     "title": "Ajuda e Suporte",
@@ -614,7 +696,7 @@
     "draftReadOnlyBadge": "Rascunho",
     "howSettlementsWork": "Como funcionam os acertos",
     "settleHelpTitle": "Como funcionam os acertos",
-    "settleHelpBody": "Calculamos quem deve a quem com base nas despesas compartilhadas. Ao acertar contas, você registra pagamentos para que todos fiquem com saldo zero.",
+    "settleHelpBody": "Calculamos quem deve a quem com base nas despesas compartilhadas. Ao acertar as contas, você registra pagamentos para que todos fiquem com saldo zero. Você tem que se certificar de que os pagamentos foram realmente feitos para que os saldos fiquem corretos.",
     "settleHelpLearnMore": "Saber mais"
   },
   "groupOnboarding": {
@@ -748,6 +830,17 @@
     "loadError": "Erro ao carregar despesas",
     "title": "Despesas",
     "subtitle": "Pesquise e filtre as despesas dos grupos.",
+    "searchFilterTitle": "Pesquisar e filtrar",
+    "filterCardStatus": "Situação",
+    "filterCardGroup": "Grupo",
+    "filterCardDateRange": "Intervalo de datas",
+    "searchResultsHeading": "Pesquisar despesas",
+    "newExpense": "Novo",
+    "filterChipAll": "Todas",
+    "filterChipConfirmed": "Confirmadas",
+    "filterChipDraft": "Rascunho",
+    "recentSection": "Últimos 30 dias",
+    "olderSection": "Anteriores",
     "quickRecentFilter": "Filtro rápido: últimos {{days}} dias",
     "showFilters": "Mostrar filtros",
     "hideFilters": "Ocultar filtros",
@@ -775,6 +868,7 @@
   "events": {
     "title": "Eventos",
     "subtitle": "Gerencie viagens, jantares e atividades compartilhadas.",
+    "filterCardStatusTitle": "Situação",
     "newEvent": "Novo",
     "createNewEvent": "Criar novo evento",
     "searchPlaceholder": "Pesquisar por nome ou descrição do evento...",

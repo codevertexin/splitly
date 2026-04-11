@@ -14,7 +14,15 @@ export function EventDetailPage({ session }: EventDetailPageProps) {
   const { t } = useTranslation();
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const { getEventDetails, actionLoading, addParticipant, updateEventDetails, closeEvent, finalizeEvent } = useEvents(session);
+  const {
+    getEventDetails,
+    actionLoading,
+    addParticipant,
+    updateEventDetails,
+    closeEvent,
+    finalizeEvent,
+    setMyParticipantStatus,
+  } = useEvents(session);
   const [event, setEvent] = useState<EventDetailData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -109,6 +117,23 @@ export function EventDetailPage({ session }: EventDetailPageProps) {
     return result;
   };
 
+  const handleSetParticipantStatus = async (status: 'going' | 'not_going') => {
+    if (!id) {
+      return { success: false as const, error: t('eventDetail.eventNotFound') };
+    }
+    const result = await setMyParticipantStatus(id, status);
+    if (!result.success) return result;
+    const refresh = await getEventDetails(id);
+    if (refresh.success && refresh.data) {
+      setEvent(refresh.data);
+      return { success: true as const };
+    }
+    return {
+      success: false as const,
+      error: refresh.error || t('eventDetail.dataRefreshFailed'),
+    };
+  };
+
   const handleFinalizeEvent = async () => {
     if (!id) {
       return { success: false as const, error: t('eventDetail.eventNotFound') };
@@ -156,6 +181,7 @@ export function EventDetailPage({ session }: EventDetailPageProps) {
       onUpdateEvent={handleUpdateEvent}
       onCloseEvent={handleCloseEvent}
       onFinalizeEvent={handleFinalizeEvent}
+      onSetParticipantStatus={handleSetParticipantStatus}
       actionLoading={actionLoading} 
       participantError={participantError}
       session={session}

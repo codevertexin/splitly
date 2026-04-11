@@ -1,4 +1,5 @@
 import React, { useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { X } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
@@ -10,6 +11,11 @@ interface ModalProps {
   size?: 'sm' | 'md' | 'lg' | 'xl';
   /** Se false, não fecha ao clicar fora nem mostra o botão X (ex.: gate obrigatório). */
   closable?: boolean;
+  /**
+   * Stacking order for the fixed overlay (Tailwind z-*).
+   * Use a value above page modals (default z-50) when this modal must appear on top, e.g. billing gates.
+   */
+  stackClassName?: string;
 }
 
 export function Modal({ 
@@ -19,6 +25,7 @@ export function Modal({
   children, 
   size = 'md',
   closable = true,
+  stackClassName = 'z-50',
 }: ModalProps) {
   useEffect(() => {
     if (isOpen) {
@@ -38,10 +45,12 @@ export function Modal({
     xl: 'max-w-xl',
   };
 
-  return (
+  const modal = (
     <AnimatePresence>
       {isOpen && (
-        <div className="fixed inset-0 z-50 flex items-start justify-center p-4 sm:items-center">
+        <div
+          className={`fixed inset-0 flex items-start justify-center p-4 sm:items-center ${stackClassName}`}
+        >
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
@@ -77,4 +86,6 @@ export function Modal({
       )}
     </AnimatePresence>
   );
+
+  return createPortal(modal, document.body);
 }

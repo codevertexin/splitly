@@ -1,0 +1,253 @@
+import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
+import { createClient } from "npm:@supabase/supabase-js@2";
+
+const corsHeaders = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers":
+    "authorization, x-client-info, apikey, content-type",
+};
+
+function jsonResponse(body: unknown, status = 200) {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: {
+      ...corsHeaders,
+      "Content-Type": "application/json",
+    },
+  });
+}
+
+type CreateSettlementConfirmationRequestBody = {
+  group_id?: string;
+  target_user_id?: string;
+  amount_cents?: number;
+  currency?: string;
+};
+
+serve(async (req) => {
+  if (req.method === "OPTIONS") {
+    return new Response("ok", { headers: corsHeaders });
+  }
+
+  if (req.method !== "POST") {
+    return jsonResponse({ error: "Method not allowed" }, 405);
+  }
+
+  try {
+    const authHeader = req.headers.get("Authorization");
+    if (!authHeader) {
+      return jsonResponse({ error: "Missing Authorization header" }, 401);
+    }
+
+    const supabaseUrl = Deno.env.get("SUPABASE_URL");
+    const supabaseAnonKey = Deno.env.get("SUPABASE_ANON_KEY");
+    const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+
+    if (!supabaseUrl || !supabaseAnonKey || !serviceRoleKey) {
+      return jsonResponse(
+        { error: "Server misconfiguration: missing Supabase env vars" },
+        500,
+      );
+    }
+
+    const supabaseAuth = createClient(supabaseUrl, supabaseAnonKey, {
+      global: {
+        headers: {
+          Authorization: authHeader,
+        },
+      },
+    });
+
+    const {
+      data: { user },
+      error: userError,
+    } = await supabaseAuth.auth.getUser();
+
+    if (userError || !user) {
+      return jsonResponse({ error: "Unauthorized" }, 401);
+    }
+
+    const body = (await req.json()) as CreateSettlementConfirmationRequestBody;
+
+    const groupId = body.group_id?.trim();
+    const targetUserId = body.target_user_id?.trim();
+    const amountCents = body.amount_cents;
+    const currency = (body.currency?.trim() || "EUR").toUpperCase();
+
+    if (!groupId) {
+      return jsonResponse({ error: "Missing group_id" }, 400);
+    }
+
+    if (!targetUserId) {
+      return jsonResponse({ error: "Missing target_user_id" }, 400);
+    }
+
+    if (!Number.isInteger(amountCents) || (amountCents ?? 0) <= 0) {
+      return jsonResponse(
+        { error: "amount_cents must be a positive integer" },
+        400,
+      );
+    }
+
+    if (targetUserId === user.id) {
+      return jsonResponse(
+        { error: "Cannot request settlement confirmation from yourself" },
+        400,
+      );
+    }
+
+    const supabaseAdmin = createClient(supabaseUrl, serviceRoleKey);
+
+    const { data: group, error: groupError } = await supabaseAdmin
+      .from("groups")
+      .select("id, name")
+      .eq("id", groupId)
+      .is("archived_at", null)
+      .maybeSingle();
+
+    if (groupError) {
+      return jsonResponse(
+        { error: "Failed to validate group", details: groupError.message },
+        500,
+      );
+    }
+
+    if (!group) {
+      return jsonResponse({ error: "Group not found" }, 404);
+    }
+
+    const { data: requesterMembership, error: requesterMembershipError } =
+      await supabaseAdmin
+        .from("group_members")
+        .select("user_id")
+        .eq("group_id", groupId)
+        .eq("user_id", user.id)
+        .eq("status", "active")
+        .maybeSingle();
+
+    if (requesterMembershipError) {
+      return jsonResponse(
+        {
+          error: "Failed to validate requester membership",
+          details: requesterMembershipError.message,
+        },
+        500,
+      );
+    }
+
+    if (!requesterMembership) {
+      return jsonResponse(
+        { error: "You are not an active member of this group" },
+        403,
+      );
+    }
+
+    const { data: targetMembership, error: targetMembershipError } =
+      await supabaseAdmin
+        .from("group_members")
+        .select("user_id")
+        .eq("group_id", groupId)
+        .eq("user_id", targetUserId)
+        .eq("status", "active")
+        .maybeSingle();
+
+    if (targetMembershipError) {
+      return jsonResponse(
+        {
+          error: "Failed to validate target membership",
+          details: targetMembershipError.message,
+        },
+        500,
+      );
+    }
+
+    if (!targetMembership) {
+      return jsonResponse(
+        { error: "Target user is not an active member of this group" },
+        403,
+      );
+    }
+
+    const { data: requesterProfile } = await supabaseAdmin
+      .from("profiles")
+      .select("full_name, username")
+      .eq("id", user.id)
+      .maybeSingle();
+
+    const requesterName =
+      requesterProfile?.full_name?.trim() ||
+      requesterProfile?.username?.trim() ||
+      "Someone";
+
+    const amountFormatted = new Intl.NumberFormat("pt-PT", {
+      style: "currency",
+      currency,
+    }).format(amountCents / 100);
+
+    const title = `${requesterName} marked ${amountFormatted} as paid`;
+    const bodyText = `Please confirm receipt for the group "${group.name}"`;
+
+    const { data: notification, error: notificationError } = await supabaseAdmin
+      .from("notifications")
+      .insert({
+        user_id: targetUserId,
+        type: "settlement_confirmation_request",
+        title,
+        body: bodyText,
+        cta_label: "Confirm payment",
+        cta_url: `/groups/${groupId}`,
+        entity_type: "group",
+        entity_id: groupId,
+        data: {
+          requester_user_id: user.id,
+          requester_name: requesterName,
+          target_user_id: targetUserId,
+          group_id: groupId,
+          group_name: group.name,
+          amount_cents: amountCents,
+          currency,
+          status: "pending",
+          kind: "settlement_confirmation",
+        },
+      })
+      .select("id")
+      .single();
+
+    if (notificationError) {
+      return jsonResponse(
+        {
+          error: "Failed to create settlement confirmation notification",
+          details: notificationError.message,
+        },
+        500,
+      );
+    }
+
+    await supabaseAdmin.from("audit_events").insert({
+      actor_user_id: user.id,
+      group_id: groupId,
+      entity_type: "notification",
+      entity_id: notification.id,
+      action: "settlement_confirmation_requested",
+      payload: {
+        target_user_id: targetUserId,
+        amount_cents: amountCents,
+        currency,
+      },
+    });
+
+    return jsonResponse({
+      success: true,
+      notification_id: notification.id,
+    });
+  } catch (error) {
+    console.error("create-settlement-confirmation-request error:", error);
+    return jsonResponse(
+      {
+        error: "Unexpected server error",
+        details: error instanceof Error ? error.message : String(error),
+      },
+      500,
+    );
+  }
+});

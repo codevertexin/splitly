@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { AlertCircle } from 'lucide-react';
 import { Session } from '@supabase/supabase-js';
@@ -22,6 +22,18 @@ import {
 } from '../../../lib/settlementSplit';
 import { getOnboardingState } from '../../../lib/onboardingState';
 import { trackProductEvent } from '../../../lib/productTracking';
+import { persistReceiptAfterExpenseCreate } from '../../../lib/expenseReceiptStorage';
+import { ExpenseReceiptSection } from '../../expenses/components/ExpenseReceiptSection';
+import { ExpenseDictationMicButton } from '../../expenses/components/ExpenseDictationMicButton';
+import { getSpeechRecognitionLanguage, useSpeechToText } from '../../../hooks/useSpeechToText';
+import {
+  clearPendingResumeFeatureAfterCheckout,
+  PRODUCT_EVENT_BILLING_SCAN_RECEIPT_CLICK,
+  readPendingResumeFeatureAfterCheckout,
+  registerPremiumResumeHandler,
+  SCAN_RECEIPT_FEATURE_KEY,
+  useBillingGuard,
+} from '../../billing';
 
 interface CreateExpenseModalProps {
   isOpen: boolean;
@@ -52,6 +64,7 @@ export function CreateExpenseModal({
   runSettlementAwareSelfChecks();
   const { t, i18n } = useTranslation();
   const [title, setTitle] = useState('');
+  const [description, setDescription] = useState('');
   const [amount, setAmount] = useState('');
   const [participantIds, setParticipantIds] = useState<string[]>([]);
   const [splitMethod, setSplitMethod] = useState<'equal' | 'manual' | 'percentage'>('equal');
@@ -61,10 +74,131 @@ export function CreateExpenseModal({
   const [percentageShares, setPercentageShares] = useState<Record<string, string>>({});
   const [formError, setFormError] = useState<string | null>(null);
   const [expenseStatus, setExpenseStatus] = useState<'draft' | 'confirmed'>('confirmed');
+  const receiptAttachmentInputRef = useRef<HTMLInputElement>(null);
+  const receiptPreviewObjectUrlRef = useRef<string | null>(null);
+  const [receiptFile, setReceiptFile] = useState<File | null>(null);
+  const [receiptPreviewUrl, setReceiptPreviewUrl] = useState<string | null>(null);
+  const billing = useBillingGuard();
+  const userId = session?.user?.id;
+
+  const speech = useSpeechToText();
+  const speechLang = useMemo(() => getSpeechRecognitionLanguage(i18n.language), [i18n.language]);
+  const [dictationField, setDictationField] = useState<'title' | 'description' | null>(null);
+
+  useEffect(() => {
+    if (!speech.isListening) setDictationField(null);
+  }, [speech.isListening]);
+
+  useEffect(() => {
+    if (!isOpen) {
+      speech.stopListening();
+    }
+  }, [isOpen, speech.stopListening]);
+
+  const appendDictated = useCallback((current: string, chunk: string) => {
+    const t = chunk.trim();
+    if (!t) return current;
+    const p = current.trim();
+    return p ? `${p} ${t}` : t;
+  }, []);
+
+  const toggleTitleDictation = useCallback(() => {
+    if (!speech.isSupported) return;
+    if (speech.isListening && dictationField === 'title') {
+      speech.stopListening();
+      return;
+    }
+    setDictationField('title');
+    speech.startListening((text) => {
+      setTitle((prev) => appendDictated(prev, text));
+    }, speechLang);
+  }, [speech, dictationField, speechLang, appendDictated]);
+
+  const toggleDescriptionDictation = useCallback(() => {
+    if (!speech.isSupported) return;
+    if (speech.isListening && dictationField === 'description') {
+      speech.stopListening();
+      return;
+    }
+    setDictationField('description');
+    speech.startListening((text) => {
+      setDescription((prev) => appendDictated(prev, text));
+    }, speechLang);
+  }, [speech, dictationField, speechLang, appendDictated]);
+
+  const revokeReceiptPreview = useCallback(() => {
+    if (receiptPreviewObjectUrlRef.current) {
+      URL.revokeObjectURL(receiptPreviewObjectUrlRef.current);
+      receiptPreviewObjectUrlRef.current = null;
+    }
+    setReceiptPreviewUrl(null);
+  }, []);
+
+  const applyReceiptFile = useCallback(
+    (file: File | null) => {
+      revokeReceiptPreview();
+      setReceiptFile(file);
+      if (file) {
+        const url = URL.createObjectURL(file);
+        receiptPreviewObjectUrlRef.current = url;
+        setReceiptPreviewUrl(url);
+      }
+    },
+    [revokeReceiptPreview],
+  );
+
+  const handleReceiptAttachmentChange = useCallback(
+    (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      e.target.value = '';
+      if (!file) return;
+      applyReceiptFile(file);
+    },
+    [applyReceiptFile],
+  );
+
+  const handleRemoveReceipt = useCallback(() => {
+    applyReceiptFile(null);
+  }, [applyReceiptFile]);
+
+  useEffect(
+    () => () => {
+      if (receiptPreviewObjectUrlRef.current) {
+        URL.revokeObjectURL(receiptPreviewObjectUrlRef.current);
+      }
+    },
+    [],
+  );
+
+  const handleOcrInterestClick = useCallback(() => {
+    void trackProductEvent(PRODUCT_EVENT_BILLING_SCAN_RECEIPT_CLICK, {
+      metadata: {
+        featureKey: SCAN_RECEIPT_FEATURE_KEY,
+        source: 'group',
+        subscription_tier: billing.tier,
+        feature_unreleased: true,
+      },
+    });
+    void billing.guardAndRun(SCAN_RECEIPT_FEATURE_KEY, () => {}, {
+      interestSource: 'group',
+    });
+  }, [billing.guardAndRun, billing.tier]);
+
+  useEffect(() => {
+    return registerPremiumResumeHandler(SCAN_RECEIPT_FEATURE_KEY, () => {});
+  }, []);
+
+  useEffect(() => {
+    const pending = readPendingResumeFeatureAfterCheckout();
+    if (pending === SCAN_RECEIPT_FEATURE_KEY) {
+      clearPendingResumeFeatureAfterCheckout();
+    }
+  }, []);
 
   useEffect(() => {
     if (!isOpen) return;
     setTitle('');
+    setDescription('');
     setAmount('');
     setFormError(null);
     setExpenseStatus('confirmed');
@@ -77,10 +211,17 @@ export function CreateExpenseModal({
     } else {
       setParticipantIds([]);
     }
-  }, [isOpen, session.user.id, members, groupId]);
+  }, [isOpen, userId, members, groupId]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    applyReceiptFile(null);
+    // Only when `isOpen` becomes true — do not re-run when `applyReceiptFile` identity changes (would clear a user-selected file).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen]);
 
   const loadDebtsToCurrentUser = useCallback(async () => {
-    if (!isOpen || !groupId || !session?.user?.id || members.length === 0) {
+    if (!isOpen || !groupId || !userId || members.length === 0) {
       setDebtsToCurrentUser({});
       return;
     }
@@ -100,11 +241,11 @@ export function CreateExpenseModal({
     setDebtsToCurrentUser(
       computeDebtsToCurrentUser({
         members,
-        currentUserId: session.user.id,
+        currentUserId: userId,
         eligibleExpenses: eligible,
       }),
     );
-  }, [isOpen, groupId, members, session.user.id]);
+  }, [isOpen, groupId, members, userId]);
 
   useEffect(() => {
     void loadDebtsToCurrentUser();
@@ -129,6 +270,11 @@ export function CreateExpenseModal({
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setFormError(null);
+
+    if (!userId) {
+      setFormError(t('expenseForm.createFailed'));
+      return;
+    }
 
     const trimmed = title.trim();
     if (!trimmed) {
@@ -209,7 +355,7 @@ export function CreateExpenseModal({
       const settleSubmit = getSettlementAwareManualSubmitSplits({
         amountCents,
         participantIds,
-        payerId: session.user.id,
+        payerId: userId,
         debtsToPayer: debtsToCurrentUser,
         settleAwareEnabled,
         splitMethod,
@@ -231,8 +377,9 @@ export function CreateExpenseModal({
 
     const result = await createExpense({
       title: trimmed,
+      description: description.trim() || undefined,
       amount_cents: amountCents,
-      paid_by_user_id: session.user.id,
+      paid_by_user_id: userId,
       participant_ids: participantIds,
       split_method: effectiveSplitMethod,
       splits,
@@ -248,6 +395,21 @@ export function CreateExpenseModal({
           metadata: { split_method: effectiveSplitMethod, suggestionApplied: settlementSuggestion.applied },
         });
       }
+      if (receiptFile && result.expenseId && session.access_token) {
+        const receiptResult = await persistReceiptAfterExpenseCreate({
+          supabase,
+          accessToken: session.access_token,
+          groupId,
+          expenseId: result.expenseId,
+          file: receiptFile,
+        });
+        if (receiptResult.error) {
+          setFormError(t('expenseForm.receiptUploadFailed'));
+          onExpenseCreated?.();
+          return;
+        }
+      }
+      applyReceiptFile(null);
       onExpenseCreated?.();
       onClose();
     } else {
@@ -267,22 +429,22 @@ export function CreateExpenseModal({
     () => canApplySettlementAwareEqualSplit({
       splitMethod: 'equal',
       participantIds,
-      payerId: session.user.id,
+      payerId: userId ?? '',
       debtsToPayer: debtsToCurrentUser,
     }),
-    [participantIds, session.user.id, debtsToCurrentUser],
+    [participantIds, userId, debtsToCurrentUser],
   );
   const settlementSuggestion = useMemo(
     () =>
       suggestSettlementAwareEqualSplit({
         amountCents: amountCentsPreview,
         participantIds,
-        payerId: session.user.id,
+        payerId: userId ?? '',
         debtsToPayer: debtsToCurrentUser,
         enabled: settleAwareEnabled,
         splitMethod,
       }),
-    [amountCentsPreview, participantIds, session.user.id, debtsToCurrentUser, settleAwareEnabled, splitMethod],
+    [amountCentsPreview, participantIds, userId, debtsToCurrentUser, settleAwareEnabled, splitMethod],
   );
   const manualTotal = participantIds.reduce((sum, id) => {
     const cents = Math.round(parseFloat((manualShares[id] ?? '').replace(',', '.')) * 100);
@@ -302,6 +464,16 @@ export function CreateExpenseModal({
       title={t('groupExpense.modalTitle')}
       size="lg"
     >
+      {!userId ? (
+        <div className="space-y-3">
+          <div className="rounded-xl border border-amber-100 bg-amber-50 px-4 py-3 text-sm text-amber-950">
+            {t('expenseForm.sessionRequired')}
+          </div>
+          <Button type="button" variant="secondary" onClick={onClose} className="w-full">
+            {t('common.cancel')}
+          </Button>
+        </div>
+      ) : (
       <form onSubmit={handleSubmit} className="space-y-5">
         {membersLoading && (
           <p className="text-sm text-slate-500">{t('groupExpense.loadingMembers')}</p>
@@ -326,6 +498,22 @@ export function CreateExpenseModal({
           value={title}
           onChange={(e) => setTitle(e.target.value)}
           placeholder={t('groupExpense.titlePlaceholder')}
+          helperText={
+            dictationField === 'title' && speech.isListening ? t('expenseForm.dictationListening') : undefined
+          }
+          suffix={
+            speech.isSupported ? (
+              <ExpenseDictationMicButton
+                isListening={dictationField === 'title' && speech.isListening}
+                onClick={toggleTitleDictation}
+                disabled={disabled}
+                labels={{
+                  start: t('expenseForm.dictationStart'),
+                  stop: t('expenseForm.dictationStop'),
+                }}
+              />
+            ) : undefined
+          }
         />
 
         <Input
@@ -337,6 +525,49 @@ export function CreateExpenseModal({
           value={amount}
           onChange={(e) => setAmount(e.target.value)}
           placeholder="0.00"
+        />
+
+        <Input
+          id="expense-description"
+          label={t('expenseForm.descriptionLabel')}
+          value={description}
+          onChange={(e) => setDescription(e.target.value)}
+          placeholder={t('expenseForm.descriptionPlaceholder')}
+          helperText={
+            dictationField === 'description' && speech.isListening
+              ? t('expenseForm.dictationListening')
+              : undefined
+          }
+          suffix={
+            speech.isSupported ? (
+              <ExpenseDictationMicButton
+                isListening={dictationField === 'description' && speech.isListening}
+                onClick={toggleDescriptionDictation}
+                disabled={disabled}
+                labels={{
+                  start: t('expenseForm.dictationStart'),
+                  stop: t('expenseForm.dictationStop'),
+                }}
+              />
+            ) : undefined
+          }
+        />
+
+        {speech.error && (
+          <p className="text-xs text-amber-900 bg-amber-50 border border-amber-100 rounded-xl px-3 py-2">
+            {t('expenseForm.dictationError')}
+          </p>
+        )}
+
+        <ExpenseReceiptSection
+          attachmentInputRef={receiptAttachmentInputRef}
+          receiptFile={receiptFile}
+          receiptPreviewUrl={receiptPreviewUrl}
+          onAttachmentInputChange={handleReceiptAttachmentChange}
+          onRemoveReceipt={handleRemoveReceipt}
+          onOcrInterestClick={handleOcrInterestClick}
+          disablePhoto={actionLoading}
+          disableOcr={actionLoading}
         />
 
         <div className="space-y-1">
@@ -596,6 +827,7 @@ export function CreateExpenseModal({
           </Button>
         </div>
       </form>
+      )}
     </Modal>
   );
 }

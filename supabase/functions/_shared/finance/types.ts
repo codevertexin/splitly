@@ -62,8 +62,20 @@ export type CreateExpenseIntent = {
   explicitAffectsBalancesIntent?: boolean | null;
 };
 
-export type CreateExpenseCanonicalInput = CreateExpenseIntent & {
-  eventStatus?: EventStatus | null;
+export type CreateExpenseCanonicalInput = {
+  groupId: string;
+  eventId: string | null;
+  paidByUserId: string;
+  participants: string[];
+  requestedSplitMethod: 'equal' | 'manual' | 'percentage' | 'settlement_aware';
+  amountCents: number;
+  statusIntent: 'draft' | 'confirmed';
+  manualShares: Array<{ userId: string; amountCents: number }>;
+  percentageShares: Array<{ userId: string; percentage: number }>;
+  description?: string;
+  explicitAffectsBalancesIntent?: boolean | null;
+  eventStatus?: 'draft' | 'open' | 'closed' | null;
+  debtsToPayer?: Record<string, number>;
 };
 
 export type CreateExpenseCanonicalResult = {

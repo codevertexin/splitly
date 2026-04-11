@@ -119,6 +119,16 @@ export function useDashboardData(session: Session) {
           .limit(250);
         if (expensesError) throw expensesError;
 
+        const { data: settlementRows, error: settlementsError } = await supabase
+  .from('settlements')
+  .select('id, group_id, from_user_id, to_user_id, amount_cents, settled_at')
+  .in('group_id', groupIds)
+  .is('deleted_at', null)
+  .order('settled_at', { ascending: false })
+  .limit(250);
+
+if (settlementsError) throw settlementsError;
+
         type Ledger = { netCents: number; latestAt: string };
         const ledgerByUser = new Map<string, Ledger>();
 
@@ -145,6 +155,25 @@ export function useDashboardData(session: Session) {
             prev.netCents -= mySplit.share_cents;
             if (new Date(incurredAt).getTime() > new Date(prev.latestAt).getTime()) prev.latestAt = incurredAt;
             ledgerByUser.set(counterpartyId, prev);
+          }
+        }
+
+        for (const row of settlementRows || []) {
+          const settledAt = row.settled_at || new Date().toISOString();
+          const amt = row.amount_cents || 0;
+        
+          if (row.from_user_id === session.user.id) {
+            const current = ledgerByUser.get(row.to_user_id) || { netCents: 0, latestAt: settledAt };
+            ledgerByUser.set(row.to_user_id, {
+              netCents: current.netCents + amt,
+              latestAt: settledAt > current.latestAt ? settledAt : current.latestAt,
+            });
+          } else if (row.to_user_id === session.user.id) {
+            const current = ledgerByUser.get(row.from_user_id) || { netCents: 0, latestAt: settledAt };
+            ledgerByUser.set(row.from_user_id, {
+              netCents: current.netCents - amt,
+              latestAt: settledAt > current.latestAt ? settledAt : current.latestAt,
+            });
           }
         }
 
@@ -222,16 +251,19 @@ export function useDashboardData(session: Session) {
 
     void fetchRecentActivity();
 
-    const onExpensesChanged = () => {
+    const onDataChanged = () => {
       void fetchRecentActivity();
     };
-    window.addEventListener(EXPENSES_CHANGED_EVENT, onExpensesChanged);
-
+    
+    window.addEventListener(EXPENSES_CHANGED_EVENT, onDataChanged);
+    window.addEventListener('group-settlement-confirmed', onDataChanged as EventListener);
+    
     return () => {
       mounted = false;
-      window.removeEventListener(EXPENSES_CHANGED_EVENT, onExpensesChanged);
+      window.removeEventListener(EXPENSES_CHANGED_EVENT, onDataChanged);
+      window.removeEventListener('group-settlement-confirmed', onDataChanged as EventListener);
     };
-  }, [session, locale]);
+  }, [session.user.id, session.user.email, locale]);
 
   return {
     summary,

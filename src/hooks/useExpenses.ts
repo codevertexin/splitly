@@ -92,21 +92,26 @@ export function useExpenses(session: Session) {
       participant_ids: string[];
       splits?: Array<{ user_id: string; share_cents?: number; percentage?: number }>;
       status: 'draft' | 'confirmed';
+      receipt_path?: string | null;
     }
   ) => {
     setActionLoading(true);
     try {
-      const { data, error: fnError } = await supabase.functions.invoke('update-expense', {
-        body: {
-          expense_id: expenseId,
-          title: input.title,
-          description: input.description,
-          amount_cents: input.amount_cents,
-          split_method: input.split_method,
-          participant_ids: input.participant_ids,
-          splits: input.splits,
-          status: input.status,
-        },
+      const body: Record<string, unknown> = {
+        expense_id: expenseId,
+        title: input.title,
+        description: input.description,
+        amount_cents: input.amount_cents,
+        requested_split_method: input.split_method,
+        participant_ids: input.participant_ids,
+        splits: input.splits,
+        status_intent: input.status,
+      };
+      if (Object.prototype.hasOwnProperty.call(input, 'receipt_path')) {
+        body.receipt_path = input.receipt_path ?? null;
+      }
+      const { data, error: fnError } = await supabase.functions.invoke('update-expense-v2', {
+        body,
         headers: {
           Authorization: `Bearer ${session.access_token}`,
         },
