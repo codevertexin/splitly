@@ -4,7 +4,7 @@ import { Modal } from './ui/Modal';
 import { Button } from './ui/Button';
 import { Input } from './ui/Input';
 import type { ProfileSaveFields, ProfileSaveResult } from '../hooks/useUserProfile';
-import type { Profile } from '../types';
+import type { Profile } from '../dbAliases';
 
 interface ProfileNameGateProps {
   profile: Profile | null;

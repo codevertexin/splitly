@@ -15,7 +15,7 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Session } from '@supabase/supabase-js';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { Badge } from '../../../components/ui/Badge';
 import { Button } from '../../../components/ui/Button';
 import { Modal } from '../../../components/ui/Modal';
@@ -27,7 +27,7 @@ import { supabase } from '../../../lib/supabase';
 import { formatEventDateLabel } from '../datePresentation';
 import { formatCurrencyCents, formatDateOnly, formatFixedInput } from '../../../lib/dateTime';
 import { iconForExpenseTitle } from '../../expenses/expenseSuggestions';
-import { filterAccountingEligibleExpenses, isAccountingEligibleExpense } from '../../../lib/accountingExpenses';
+import { isAccountingEligibleExpense } from '../../../lib/accountingExpenses';
 import { notifyExpensesChanged } from '../../../lib/expenseEvents';
 
 interface EventDetailProps {
@@ -155,6 +155,7 @@ export function EventDetail({
   session,
 }: EventDetailProps) {
   const { t, i18n } = useTranslation();
+  const navigate = useNavigate();
   const draftSectionRef = useRef<HTMLDivElement | null>(null);
   const [showAddExpense, setShowAddExpense] = useState(false);
   const [showAddParticipant, setShowAddParticipant] = useState(false);
@@ -239,8 +240,8 @@ export function EventDetail({
   );
   /** V1 accounting: same rule as dashboard / group balances — draft event ⇒ no totals; else only eligible confirmed rows. */
   const accountingConfirmedExpenses = useMemo(() => {
-    if (event.status === 'draft') return [];
-    return filterAccountingEligibleExpenses(confirmedExpenses);
+    if (event.status === 'draft') return [] as typeof confirmedExpenses;
+    return confirmedExpenses;
   }, [event.status, confirmedExpenses]);
   const hasAnyExpenses = event.expenses.length > 0;
 
@@ -378,6 +379,7 @@ export function EventDetail({
   };
 
   const openConfirmExpenseModal = (expense: EventDetailData['expenses'][number]) => {
+    if (!isExpenseOwner(expense)) return;
     setConfirmingExpense(expense);
     setConfirmAmount(formatFixedInput(expense.amount_cents / 100));
     setConfirmPayerId(expense.paid_by_user_id);
@@ -403,15 +405,15 @@ export function EventDetail({
 
     setConfirmLoading(true);
     setEditError(null);
-    const { data, error } = await supabase.functions.invoke('update-expense', {
+    const { data, error } = await supabase.functions.invoke('update-expense-v2', {
       body: {
         expense_id: confirmingExpense.id,
         title: confirmingExpense.title,
         description: confirmingExpense.description,
         amount_cents: amountCents,
-        split_method: 'equal',
+        requested_split_method: 'equal',
         participant_ids: confirmParticipantIds,
-        status: 'confirmed',
+        status_intent: 'confirmed',
       },
       headers: {
         Authorization: `Bearer ${session.access_token}`,
@@ -486,6 +488,9 @@ export function EventDetail({
 
   const toReceiveEvent = Math.max(0, yourNetInEventCents);
   const toPayEvent = Math.max(0, -yourNetInEventCents);
+  const isExpenseOwner = (expense: EventDetailData['expenses'][number]) =>
+    expense.created_by === session.user.id || expense.paid_by_user_id === session.user.id;
+  const hasOwnDraftExpenses = draftExpenses.some(isExpenseOwner);
 
   const renderExpenseRow = (expense: EventDetailData['expenses'][number], variant: 'draft' | 'confirmed') => {
     const icon = iconForExpenseTitle(expense.title);
@@ -494,8 +499,16 @@ export function EventDetail({
       variant === 'draft'
         ? 'border-amber-100/90 bg-white/95 shadow-sm shadow-amber-900/5'
         : 'border-slate-100/90 bg-white shadow-sm';
+    const canOpenEditor = isExpenseOwner(expense) && event.status !== 'closed';
     return (
-      <div key={expense.id} className={`flex flex-wrap items-start gap-3 rounded-2xl border p-4 ${wrap}`}>
+      <div
+        key={expense.id}
+        className={`flex flex-wrap items-start gap-3 rounded-2xl border p-4 ${wrap} ${canOpenEditor ? 'cursor-pointer hover:bg-slate-50/70' : ''}`}
+        onClick={() => {
+          if (!canOpenEditor) return;
+          navigate(`/expenses?editExpenseId=${expense.id}`);
+        }}
+      >
         <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-slate-100 text-xl" aria-hidden>
           {icon}
         </span>
@@ -516,8 +529,17 @@ export function EventDetail({
         </div>
         <div className="ml-auto flex shrink-0 flex-col items-end gap-2">
           <p className="font-bold tabular-nums text-slate-900">{formatMoney(expense.amount_cents)}</p>
-          {variant === 'draft' && (
-            <Button type="button" variant="outline" size="sm" className="border-amber-200 text-amber-950 hover:bg-amber-50" onClick={() => openConfirmExpenseModal(expense)}>
+          {variant === 'draft' && isExpenseOwner(expense) && (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="border-amber-200 text-amber-950 hover:bg-amber-50"
+              onClick={(e) => {
+                e.stopPropagation();
+                openConfirmExpenseModal(expense);
+              }}
+            >
               {t('eventDetail.confirmExpenseCta')}
             </Button>
           )}
@@ -927,7 +949,11 @@ export function EventDetail({
             <div className="rounded-3xl border border-amber-100/80 bg-amber-50/25 p-4 sm:p-5">
               <div className="mb-4 border-b border-amber-200/60 pb-3">
                 <h3 className="text-lg font-extrabold tracking-tight text-amber-950">{t('eventDetail.plannedExpensesTitle')}</h3>
-                <p className="mt-1.5 text-sm text-amber-900/85">{t('eventDetail.plannedExpensesSubtitle')}</p>
+                <p className="mt-1.5 text-sm text-amber-900/85">
+                  {hasOwnDraftExpenses
+                    ? t('eventDetail.plannedExpensesSubtitle')
+                    : t('eventDetail.plannedExpensesSubtitleViewer')}
+                </p>
               </div>
               {draftExpenses.length === 0 ? (
                 <p className="text-sm text-amber-900/70">{t('expenses.noDraftExpenses')}</p>

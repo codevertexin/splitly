@@ -1,1 +1,124 @@
 @import "tailwindcss";
+
+@media print {
+  /* Preserve UI table header colours & receipt images when printing to PDF (Chrome / Edge / Safari). */
+  html body.reports-page-active {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  body.reports-page-active aside,
+  body.reports-page-active header,
+  body.reports-page-active footer,
+  body.reports-page-active nav {
+    display: none !important;
+  }
+
+  body.reports-page-active main,
+  body.reports-page-active .reports-page {
+    padding: 0 !important;
+    margin: 0 !important;
+    max-width: none !important;
+  }
+
+  body.reports-page-active,
+  body.reports-page-active main {
+    background: #fff !important;
+  }
+
+  body.reports-page-active .reports-no-print,
+  body.reports-page-active .no-print {
+    display: none !important;
+  }
+
+  body.reports-page-active .reports-document {
+    border: 0 !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+    padding: 10mm 12mm !important;
+    max-width: none !important;
+  }
+
+  /* Drop horizontal scroll in print: tables use full page width (matches on-screen layout without scrollbar). */
+  body.reports-page-active .report-table-inner {
+    overflow: visible !important;
+    max-width: 100% !important;
+  }
+
+  body.reports-page-active table.report-data-table {
+    min-width: 0 !important;
+    width: 100% !important;
+    table-layout: auto !important;
+  }
+
+  body.reports-page-active .report-table-shell {
+    box-shadow: none !important;
+  }
+
+  body.reports-page-active thead {
+    display: table-header-group;
+  }
+
+  /*
+   * Cabeçalho em impressão: uma linha — texto à esquerda (largura útil), logo pequeno no canto superior direito.
+   * (Evitar column: o logo não deve ocupar largura total nem herdar max-width:100% das imagens do corpo.)
+   */
+  body.reports-page-active .report-doc-header {
+    display: flex !important;
+    flex-direction: row !important;
+    flex-wrap: nowrap !important;
+    justify-content: space-between !important;
+    align-items: flex-start !important;
+    gap: 1rem !important;
+  }
+
+  body.reports-page-active .report-doc-header-text {
+    flex: 1 1 auto !important;
+    min-width: 0 !important;
+    max-width: none !important;
+  }
+
+  body.reports-page-active .report-doc-header-logo {
+    flex: 0 0 auto !important;
+    align-self: flex-start !important;
+    width: auto !important;
+    max-width: 168px !important;
+    max-height: 42px !important;
+    height: auto !important;
+    object-fit: contain !important;
+  }
+
+  /* Anexo de comprovativos sempre numa página nova (depois das tabelas financeiras). */
+  body.reports-page-active .report-section-receipts {
+    break-before: page;
+    page-break-before: always;
+  }
+
+  /* Manter o título principal da secção com o conteúdo que se segue (evita “título só” no fim da página). */
+  body.reports-page-active .reports-document section h2 {
+    break-after: avoid;
+    page-break-after: avoid;
+  }
+
+  /*
+   * Agrupa subtítulo + tabela (ex.: “Totals by payer” + grelha) para não ficarem separados por quebra de página.
+   * Preferível a forçar uma secção inteira por página (poupa papel e páginas vazias).
+   */
+  body.reports-page-active .report-print-keep {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  /* Miniaturas de recibos: largura útil; não aplicar ao logo do cabeçalho (causa faixa larga cinzenta). */
+  body.reports-page-active .reports-document img:not(.report-doc-header-logo) {
+    max-width: 100% !important;
+    height: auto !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  body.reports-page-active .report-doc-header-logo {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+}

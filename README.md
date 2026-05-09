@@ -1,20 +1,29 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
-</div>
+# Playwright starter suite for Splitly V2
 
-# Run and deploy your AI Studio app
+Este pacote contém uma base de testes E2E alinhada com a nova implementação:
+- grupos com primeiro ciclo
+- despesas de grupo vs despesas de evento
+- fecho de ciclo
+- histórico
+- relatórios
+- PDF
 
-This contains everything you need to run your app locally.
+## Pré-requisitos
 
-View your app in AI Studio: https://ai.studio/apps/bdb557b8-4732-4842-8a1f-4eb7b58aa21f
+1. Instalar dependências
+   npm install
+2. Copiar `.env.example` para `.env`
+3. Garantir que a app está a correr em `PLAYWRIGHT_BASE_URL`
+4. Garantir que a conta de teste já existe no Supabase
 
-## Run Locally
+## Executar
 
-**Prerequisites:**  Node.js
+- `npm run test:e2e`
+- `npm run test:e2e:headed`
+- `npm run test:e2e:ui`
 
+## Notas importantes
 
-1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`
+- Os testes usam seletores acessíveis e regex multi-idioma, mas continuam a assumir a UI atual.
+- Onde a UI seja demasiado ambígua, foi usada uma abordagem conservadora. Se houver instabilidade, a recomendação é adicionar `data-testid` aos elementos críticos.
+- O fluxo de settlement depende do estado funcional no ambiente. A suite inclui esse fluxo como teste opcional/ajustável.

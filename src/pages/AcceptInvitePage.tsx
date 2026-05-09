@@ -1,6 +1,9 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
-import { getStoredGroupInviteToken, clearGroupInviteToken } from '../lib/groupInvite';
+import {
+  getPendingGroupInviteToken,
+  clearPendingGroupInviteToken,
+} from '../lib/groupInviteToken';
 
 export function AcceptInvitePage() {
   const [loading, setLoading] = useState(true);
@@ -8,7 +11,7 @@ export function AcceptInvitePage() {
 
   useEffect(() => {
     const run = async () => {
-      const token = getStoredGroupInviteToken();
+      const token = getPendingGroupInviteToken();
       if (!token) {
         setError('No invite found');
         setLoading(false);
@@ -25,7 +28,7 @@ export function AcceptInvitePage() {
         return;
       }
 
-      clearGroupInviteToken();
+      clearPendingGroupInviteToken();
 
       // redirecionar para grupo
       window.location.href = `/groups/${data.group_id}`;

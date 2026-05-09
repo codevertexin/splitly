@@ -94,7 +94,9 @@ serve(async (req) => {
 
     const { data: existingExpense, error: existingExpenseError } = await adminClient
       .from('expenses')
-      .select('id, group_id, event_id, paid_by_user_id, currency, created_by')
+      .select(
+        'id, group_id, event_id, paid_by_user_id, currency, created_by, amount_cents, split_method',
+      )
       .eq('id', expenseId)
       .maybeSingle();
 
@@ -146,16 +148,103 @@ serve(async (req) => {
 
     const activeMemberIds = new Set((members ?? []).map((m) => m.user_id));
 
-    if (!activeMemberIds.has(paidByUserId)) {
+    if (eventId && !activeMemberIds.has(paidByUserId)) {
       return json({ error: 'paid_by_user_id is not an active group member' }, { status: 400 });
     }
 
-    for (const participantId of participantIds) {
-      if (!activeMemberIds.has(participantId)) {
+    let engineParticipantIds: string[] = participantIds;
+    let engineManualShares =
+      requestedSplitMethod === 'manual'
+        ? splits.map((s) => ({
+            userId: s.user_id,
+            amountCents: s.share_cents ?? 0,
+          }))
+        : [];
+    let enginePercentageShares =
+      requestedSplitMethod === 'percentage'
+        ? splits.map((s) => ({
+            userId: s.user_id,
+            percentage: s.percentage ?? 0,
+          }))
+        : [];
+
+    if (!eventId) {
+      const { data: snapRows, error: snapErr } = await adminClient
+        .from('expense_splits')
+        .select('user_id, share_cents, percentage')
+        .eq('expense_id', expenseId);
+
+      if (snapErr) return json({ error: snapErr.message }, { status: 400 });
+      if (!snapRows?.length) {
+        return json({ error: 'Group-wide expense has no splits snapshot' }, { status: 400 });
+      }
+
+      const existingAmount = existingExpense.amount_cents as number;
+      if (amountCents !== existingAmount) {
         return json(
-          { error: `participant ${participantId} is not an active group member` },
+          {
+            error:
+              'Cannot change amount on a group-wide expense (no event). expense_splits snapshot is immutable.',
+          },
           { status: 400 },
         );
+      }
+      const dbRows = snapRows as Array<{
+        user_id: string;
+        share_cents: number;
+        percentage: number | null;
+      }>;
+      const snapshotIdsSorted = [...new Set(dbRows.map((r) => r.user_id))].sort();
+      const requestedIdsSorted = [...new Set(participantIds)].sort();
+      if (snapshotIdsSorted.join('|') !== requestedIdsSorted.join('|')) {
+        return json(
+          {
+            error:
+              'Participants for group-wide expenses must keep the same active snapshot members.',
+          },
+          { status: 400 },
+        );
+      }
+
+      engineParticipantIds = [...snapshotIdsSorted];
+
+      if (requestedSplitMethod === 'manual') {
+        if (splits.length !== engineParticipantIds.length) {
+          return json(
+            { error: 'manual split must include all snapshot participants for group-wide expenses' },
+            { status: 400 },
+          );
+        }
+        engineManualShares = splits.map((s) => ({
+          userId: s.user_id,
+          amountCents: s.share_cents ?? 0,
+        }));
+      } else {
+        engineManualShares = [];
+      }
+
+      if (requestedSplitMethod === 'percentage') {
+        if (splits.length !== engineParticipantIds.length) {
+          return json(
+            { error: 'percentage split must include all snapshot participants for group-wide expenses' },
+            { status: 400 },
+          );
+        }
+        enginePercentageShares = splits.map((s) => ({
+          userId: s.user_id,
+          percentage: s.percentage ?? 0,
+        }));
+      } else {
+        enginePercentageShares = [];
+      }
+    } else {
+      for (const participantId of participantIds) {
+        if (!activeMemberIds.has(participantId)) {
+          return json(
+            { error: `participant ${participantId} is not an active group member` },
+            { status: 400 },
+          );
+        }
       }
     }
 
@@ -183,22 +272,6 @@ serve(async (req) => {
         return json({ error: 'Cannot edit expense in a closed event' }, { status: 400 });
       }
     }
-
-    const manualShares =
-      requestedSplitMethod === 'manual'
-        ? splits.map((s) => ({
-            userId: s.user_id,
-            amountCents: s.share_cents ?? 0,
-          }))
-        : [];
-
-    const percentageShares =
-      requestedSplitMethod === 'percentage'
-        ? splits.map((s) => ({
-            userId: s.user_id,
-            percentage: s.percentage ?? 0,
-          }))
-        : [];
 
     const { data: existingExpenses, error: existingExpensesError } = await adminClient
       .from('expenses')
@@ -238,12 +311,12 @@ serve(async (req) => {
       groupId,
       eventId,
       paidByUserId,
-      participants: participantIds,
+      participants: engineParticipantIds,
       requestedSplitMethod,
       amountCents,
       statusIntent,
-      manualShares,
-      percentageShares,
+      manualShares: engineManualShares,
+      percentageShares: enginePercentageShares,
       description,
       explicitAffectsBalancesIntent: null,
       eventStatus,
@@ -252,7 +325,7 @@ serve(async (req) => {
 
     const canonical = createExpenseCanonical(engineInput);
 
-    const receiptPathPatch: { receipt_path?: string | null } = {};
+    const receiptPatch: Record<string, string | number | null> = {};
     if (hasReceiptPath) {
       if (receiptPathInput !== null && receiptPathInput !== undefined && receiptPathInput !== '') {
         const rp = receiptPathInput as string;
@@ -260,9 +333,23 @@ serve(async (req) => {
         if (parts.length < 3 || parts[0] !== groupId || parts[1] !== expenseId) {
           return json({ error: 'Invalid receipt_path for this expense' }, { status: 400 });
         }
-        receiptPathPatch.receipt_path = rp;
+        receiptPatch.receipt_path = rp;
+        if (Object.prototype.hasOwnProperty.call(body, 'receipt_filename')) {
+          receiptPatch.receipt_filename = (body.receipt_filename as string | null) ?? null;
+        }
+        if (Object.prototype.hasOwnProperty.call(body, 'receipt_mime_type')) {
+          receiptPatch.receipt_mime_type = (body.receipt_mime_type as string | null) ?? null;
+        }
+        if (Object.prototype.hasOwnProperty.call(body, 'receipt_size_bytes')) {
+          const n = body.receipt_size_bytes as number | null | undefined;
+          receiptPatch.receipt_size_bytes =
+            typeof n === 'number' && Number.isFinite(n) ? n : null;
+        }
       } else {
-        receiptPathPatch.receipt_path = null;
+        receiptPatch.receipt_path = null;
+        receiptPatch.receipt_filename = null;
+        receiptPatch.receipt_mime_type = null;
+        receiptPatch.receipt_size_bytes = null;
       }
     }
 
@@ -280,7 +367,7 @@ serve(async (req) => {
         finance_engine_version: 'v2',
         calculation_trace: canonical.calculationTrace,
         balance_impact_summary: canonical.balanceImpactSummary,
-        ...receiptPathPatch,
+        ...receiptPatch,
       })
       .eq('id', expenseId)
       .select('*')

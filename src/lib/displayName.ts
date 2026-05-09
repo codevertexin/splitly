@@ -1,4 +1,4 @@
-import type { Profile } from '../types';
+import type { Profile } from '../dbAliases';
 
 export type SocialNameParts = {
   full_name?: string | null;

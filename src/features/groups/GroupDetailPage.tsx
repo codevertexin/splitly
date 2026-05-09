@@ -14,7 +14,7 @@ import { GroupDetail } from './components/GroupDetail';
 import { CreateExpenseModal } from './components/CreateExpenseModal';
 import { ManageGroupModal } from './components/ManageGroupModal';
 import { CreateEventForm } from '../events/components/CreateEventForm';
-import { Group } from '../../types';
+import type { Group } from '../../dbAliases';
 import { Modal } from '../../components/ui/Modal';
 import { Input } from '../../components/ui/Input';
 import { Button } from '../../components/ui/Button';
@@ -41,6 +41,7 @@ import {
 } from '../../lib/expenseReceiptStorage';
 import { useExpenseReceiptSignedUrl } from '../../hooks/useExpenseReceiptSignedUrl';
 import { ExpenseReceiptSection } from '../expenses/components/ExpenseReceiptSection';
+import { MemberAvatar } from '../../components/MemberAvatar';
 import {
   PRODUCT_EVENT_BILLING_SCAN_RECEIPT_CLICK,
   SCAN_RECEIPT_FEATURE_KEY,
@@ -54,6 +55,15 @@ type GroupSettlementRow = {
   to_user_id: string;
   amount_cents: number;
   settled_at: string;
+};
+
+type ActiveBatchPreview = {
+  id: string;
+  title: string;
+  description: string | null;
+  is_active: boolean;
+  closed_at: string | null;
+  created_at: string | null;
 };
 
 interface GroupDetailPageProps {
@@ -151,6 +161,7 @@ export function GroupDetailPage({ session }: GroupDetailPageProps) {
   const [settlements, setSettlements] = useState<GroupSettlementRow[]>([]);
   const [settlementsLoading, setSettlementsLoading] = useState(false);
   const [settlementsError, setSettlementsError] = useState<string | null>(null);
+  const [activeBatchPreview, setActiveBatchPreview] = useState<ActiveBatchPreview | null>(null);
   const onboardingState = getOnboardingState();
   const showSettlementHint = onboardingState.hasCreatedExpense && myBalanceCents > 0 && !onboardingState.hasSeenSettlementHint;
   const editAmountCentsPreview = Math.round((parseFloat(editAmount.replace(',', '.')) || 0) * 100);
@@ -249,6 +260,30 @@ export function GroupDetailPage({ session }: GroupDetailPageProps) {
     editingExpense?.receipt_path && !editReceiptRemoved ? editingExpense.receipt_path : null;
   const storedReceiptSignedUrl = useExpenseReceiptSignedUrl(storedReceiptPathForPreview);
 
+  const refetchActiveBatch = useCallback(async () => {
+    if (!group?.id) {
+      setActiveBatchPreview(null);
+      return;
+    }
+
+    try {
+      const { data, error: qError } = await supabase
+        .from('expense_batches')
+        .select('id, title, description, is_active, closed_at, created_at')
+        .eq('group_id', group.id)
+        .eq('is_active', true)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (qError) throw qError;
+      setActiveBatchPreview((data as ActiveBatchPreview | null) ?? null);
+    } catch (err) {
+      console.error('Failed to load active batch preview:', err);
+      setActiveBatchPreview(null);
+    }
+  }, [group?.id]);
+
   useEffect(() => {
     return () => {
       if (editReceiptPreviewObjectUrlRef.current) {
@@ -256,6 +291,10 @@ export function GroupDetailPage({ session }: GroupDetailPageProps) {
       }
     };
   }, []);
+
+  useEffect(() => {
+    void refetchActiveBatch();
+  }, [refetchActiveBatch]);
 
   useEffect(() => {
     setGroup(null);
@@ -281,6 +320,10 @@ export function GroupDetailPage({ session }: GroupDetailPageProps) {
 
   const [settleLoading, setSettleLoading] = useState(false);
   const [settleFeedback, setSettleFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+  const [closeBatchLoading, setCloseBatchLoading] = useState(false);
+  const [closeBatchModalOpen, setCloseBatchModalOpen] = useState(false);
+  const [newCycleTitleInput, setNewCycleTitleInput] = useState('');
+  const [closeBatchModalError, setCloseBatchModalError] = useState<string | null>(null);
 
   const refetchSettlements = useCallback(async () => {
     if (!group?.id) {
@@ -496,6 +539,63 @@ export function GroupDetailPage({ session }: GroupDetailPageProps) {
     [group, requestingUserIds, requestedUserIds, t],
   );
 
+  const openCloseBatchModal = useCallback(() => {
+    setCloseBatchModalError(null);
+    const dateStr = new Date().toISOString().slice(0, 10);
+    setNewCycleTitleInput(t('groupDetail.closeBatchSuggestedTitle', { date: dateStr }));
+    setCloseBatchModalOpen(true);
+  }, [t]);
+
+  const closeCloseBatchModal = useCallback(() => {
+    setCloseBatchModalOpen(false);
+    setCloseBatchModalError(null);
+  }, []);
+
+  const confirmCloseCurrentBatch = useCallback(async () => {
+    if (!group?.id) return;
+    const trimmed = newCycleTitleInput.trim();
+    const fallbackTitle = `Cycle ${new Date().toISOString().slice(0, 10)}`;
+    const title = trimmed || fallbackTitle;
+    setCloseBatchLoading(true);
+    setCloseBatchModalError(null);
+    try {
+      const { error } = await supabase.rpc('close_current_batch_and_open_new', {
+        p_group_id: group.id,
+        p_created_by: session.user.id,
+        p_new_title: title,
+      });
+      if (error) throw error;
+
+      await Promise.all([
+        refetchExpenses(),
+        refetchActiveBatch(),
+        refetchBalances(),
+        refetchBalancesZero(),
+      ]);
+      notifyExpensesChanged({ groupId: group.id });
+      closeCloseBatchModal();
+    } catch (err: unknown) {
+      const msg =
+        err && typeof err === 'object' && 'message' in err && typeof (err as { message: unknown }).message === 'string'
+          ? (err as { message: string }).message
+          : t('groupDetail.closeBatchFailed');
+      setCloseBatchModalError(msg);
+      console.error('close_current_batch_and_open_new failed:', err);
+    } finally {
+      setCloseBatchLoading(false);
+    }
+  }, [
+    closeCloseBatchModal,
+    group?.id,
+    newCycleTitleInput,
+    refetchBalances,
+    refetchBalancesZero,
+    refetchActiveBatch,
+    refetchExpenses,
+    session.user.id,
+    t,
+  ]);
+
   const handleCreateEvent = async (
     title: string,
     description: string,
@@ -697,30 +797,23 @@ export function GroupDetailPage({ session }: GroupDetailPageProps) {
     }
 
     let receipt_path: string | null | undefined = undefined;
+    let receipt_filename: string | null | undefined = undefined;
+    let receipt_mime_type: string | null | undefined = undefined;
+    let receipt_size_bytes: number | null | undefined = undefined;
     if (editReceiptFile) {
       const path = buildExpenseReceiptObjectPath(editingExpense.group_id, editingExpense.id, editReceiptFile);
       const up = await uploadExpenseReceiptObject(supabase, path, editReceiptFile);
       if (up.error) {
-        setEditError(t('expenseForm.receiptUploadFailed'));
+        setEditError(t('expenseForm.receiptUploadFailedEdit'));
         return;
       }
       receipt_path = path;
+      receipt_filename = editReceiptFile.name;
+      receipt_mime_type = editReceiptFile.type || null;
+      receipt_size_bytes = editReceiptFile.size;
     } else if (editReceiptRemoved && editingExpense.receipt_path) {
       receipt_path = null;
     }
-
-    console.log('[group-edit] submit payload', {
-      expenseId: editingExpense.id,
-      title: trimmedTitle,
-      amount_cents: amountCents,
-      description: editDescription.trim() ? editDescription.trim() : null,
-      split_method:
-        editSplitMethod === 'equal' && editSettleAwareEnabled && editSettleAwareAvailable ? 'manual' : editSplitMethod,
-      participant_ids: editParticipantIds,
-      splits,
-      status: editStatus,
-      receipt_path,
-    });
 
     const updatePayload: Parameters<typeof updateExpense>[1] = {
       title: trimmedTitle,
@@ -734,6 +827,15 @@ export function GroupDetailPage({ session }: GroupDetailPageProps) {
     };
     if (receipt_path !== undefined) {
       updatePayload.receipt_path = receipt_path;
+    }
+    if (receipt_filename !== undefined) {
+      updatePayload.receipt_filename = receipt_filename;
+    }
+    if (receipt_mime_type !== undefined) {
+      updatePayload.receipt_mime_type = receipt_mime_type;
+    }
+    if (receipt_size_bytes !== undefined) {
+      updatePayload.receipt_size_bytes = receipt_size_bytes;
     }
 
     const result = await updateExpense(editingExpense.id, updatePayload);
@@ -801,6 +903,8 @@ export function GroupDetailPage({ session }: GroupDetailPageProps) {
 
   if (!group) return null;
 
+  const isEditingGroupWideExpense = Boolean(editingExpense && !editingExpense.event_id);
+
   return (
     <>
       <GroupDetail
@@ -809,6 +913,7 @@ export function GroupDetailPage({ session }: GroupDetailPageProps) {
         membersLoading={membersLoading}
         expenses={expenses}
         allExpenses={allExpenses}
+        activeBatchPreview={activeBatchPreview}
         settlements={settlements}
         expensesLoading={expensesLoading}
         yourBalanceCents={myBalanceCents}
@@ -836,6 +941,8 @@ export function GroupDetailPage({ session }: GroupDetailPageProps) {
           }
           setIsExpenseModalOpen(true);
         }}
+        onOpenCloseBatchModal={isOwner ? openCloseBatchModal : undefined}
+        closingCurrentBatch={closeBatchLoading}
         showOnboardingNextExpenseBanner={showOnboardingNextExpenseBanner}
         onDismissOnboardingNextExpenseBanner={() => setShowOnboardingNextExpenseBanner(false)}
         highlightAddExpenseCta={showOnboardingNextExpenseBanner && !onboardingState.hasCreatedExpense}
@@ -862,6 +969,46 @@ export function GroupDetailPage({ session }: GroupDetailPageProps) {
       />
 
       <Modal
+        isOpen={closeBatchModalOpen}
+        onClose={closeCloseBatchModal}
+        title={t('groupDetail.closeBatchModalTitle')}
+        size="md"
+        closable={!closeBatchLoading}
+      >
+        <div className="space-y-4">
+          <p className="text-sm text-slate-600">{t('groupDetail.closeBatchModalBody')}</p>
+          <Input
+            id="new-cycle-title"
+            label={t('groupDetail.newCycleTitleLabel')}
+            value={newCycleTitleInput}
+            onChange={(e) => setNewCycleTitleInput(e.target.value)}
+            placeholder={t('groupDetail.newCycleTitlePlaceholder')}
+            disabled={closeBatchLoading}
+          />
+          {closeBatchModalError && (
+            <div className="flex items-start gap-2 rounded-xl border border-red-100 bg-red-50 p-3 text-sm text-red-700">
+              <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+              {closeBatchModalError}
+            </div>
+          )}
+          <div className="flex gap-3 pt-1">
+            <Button
+              type="button"
+              variant="secondary"
+              className="flex-1"
+              onClick={closeCloseBatchModal}
+              disabled={closeBatchLoading}
+            >
+              {t('groupDetail.closeBatchModalCancel')}
+            </Button>
+            <Button type="button" className="flex-[2]" loading={closeBatchLoading} onClick={() => void confirmCloseCurrentBatch()}>
+              {t('groupDetail.closeBatchModalConfirm')}
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal
         isOpen={createEventModalOpen}
         onClose={() => setCreateEventModalOpen(false)}
         title={t('events.createNewEvent')}
@@ -882,6 +1029,11 @@ export function GroupDetailPage({ session }: GroupDetailPageProps) {
         size="lg"
       >
         <form onSubmit={handleEditExpenseSubmit} className="space-y-4">
+          {isEditingGroupWideExpense && (
+            <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
+              {t('expenseForm.groupWideEditLockedHint')}
+            </div>
+          )}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <Input
               label={t('expenseForm.titleLabel')}
@@ -898,6 +1050,8 @@ export function GroupDetailPage({ session }: GroupDetailPageProps) {
               value={editAmount}
               onChange={(e) => setEditAmount(e.target.value)}
               placeholder="0.00"
+              readOnly={isEditingGroupWideExpense}
+              className={isEditingGroupWideExpense ? 'bg-slate-100 cursor-not-allowed' : ''}
             />
           </div>
           <Input
@@ -916,6 +1070,7 @@ export function GroupDetailPage({ session }: GroupDetailPageProps) {
             onOcrInterestClick={handleEditOcrInterestClick}
             disablePhoto={expenseActionLoading}
             disableOcr={expenseActionLoading}
+            scanReceiptInterestUserId={session.user.id}
           />
           <div className="space-y-1">
             <label className="block text-sm font-semibold text-slate-700">{t('groupExpense.expenseStatusLabel')}</label>
@@ -931,26 +1086,61 @@ export function GroupDetailPage({ session }: GroupDetailPageProps) {
           </div>
           <div className="space-y-2">
             <span className="block text-sm font-semibold text-slate-700">{t('groupExpense.participantsLabel')}</span>
-            <div className="flex flex-wrap gap-2">
-              {members.map((m) => (
-                <label
-                  key={m.user_id}
-                  className="inline-flex items-center gap-2.5 px-3 py-2 rounded-xl border border-slate-100 bg-slate-50 cursor-pointer text-sm max-w-full"
-                >
-                  <input
-                    type="checkbox"
-                    className="rounded border-slate-300 text-blue-600 focus:ring-blue-500 shrink-0"
-                    checked={editParticipantIds.includes(m.user_id)}
-                    onChange={() =>
-                      setEditParticipantIds((prev) =>
-                        prev.includes(m.user_id) ? prev.filter((id) => id !== m.user_id) : [...prev, m.user_id]
-                      )
+            {isEditingGroupWideExpense ? (
+              <>
+                <p className="text-xs text-slate-500">{t('groupExpense.groupWideParticipantsHint')}</p>
+                <div className="flex flex-wrap gap-2">
+                  {editParticipantIds.map((id) => {
+                    const m = members.find((x) => x.user_id === id);
+                    if (!m) {
+                      return (
+                        <div
+                          key={id}
+                          className="inline-flex items-center gap-2 px-3 py-2 rounded-xl border border-slate-100 bg-slate-50 text-sm text-slate-600"
+                        >
+                          {id}
+                        </div>
+                      );
                     }
-                  />
-                  <span className="font-medium text-slate-800 truncate">{memberLabel(m)}</span>
-                </label>
-              ))}
-            </div>
+                    return (
+                      <div
+                        key={id}
+                        className="inline-flex items-center gap-2.5 px-3 py-2 rounded-xl border border-slate-100 bg-slate-50 text-sm max-w-full"
+                      >
+                        <MemberAvatar
+                          userId={m.user_id}
+                          fullName={m.full_name}
+                          avatarUrl={m.avatar_url}
+                          size="sm"
+                        />
+                        <span className="font-medium text-slate-800 truncate">{memberLabel(m)}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </>
+            ) : (
+              <div className="flex flex-wrap gap-2">
+                {members.map((m) => (
+                  <label
+                    key={m.user_id}
+                    className="inline-flex items-center gap-2.5 px-3 py-2 rounded-xl border border-slate-100 bg-slate-50 cursor-pointer text-sm max-w-full"
+                  >
+                    <input
+                      type="checkbox"
+                      className="rounded border-slate-300 text-blue-600 focus:ring-blue-500 shrink-0"
+                      checked={editParticipantIds.includes(m.user_id)}
+                      onChange={() =>
+                        setEditParticipantIds((prev) =>
+                          prev.includes(m.user_id) ? prev.filter((id) => id !== m.user_id) : [...prev, m.user_id]
+                        )
+                      }
+                    />
+                    <span className="font-medium text-slate-800 truncate">{memberLabel(m)}</span>
+                  </label>
+                ))}
+              </div>
+            )}
           </div>
           <div className="space-y-1.5">
             {editSplitMethod === 'equal' && editSettleAwareAvailable && (

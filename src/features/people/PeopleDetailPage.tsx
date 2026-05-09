@@ -8,7 +8,7 @@ import { useUserContacts } from '../../hooks/useUserContacts';
 import { Card } from '../../components/ui/Card';
 import { Button } from '../../components/ui/Button';
 import { formatCurrencyCents, formatDateOnly } from '../../lib/dateTime';
-import type { UserContact } from '../../types';
+import type { UserContact } from '../../dbAliases';
 
 type SharedGroup = {
   id: string;

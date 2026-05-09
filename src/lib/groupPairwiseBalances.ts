@@ -1,9 +1,16 @@
 import type { GroupExpenseRow } from '../hooks/useGroupExpenses';
 import type { GroupMemberRow } from '../hooks/useGroupMembers';
 import { memberLabel } from '../hooks/useGroupMembers';
+import { computeLedger } from './ledger';
 
-/** Positive = you owe them; negative = they owe you. */
+/** Positive = they owe you; negative = you owe them. */
 export type PairwiseNetRow = { member: GroupMemberRow; netIOCents: number };
+
+export type SettlementRow = {
+  from_user_id: string;
+  to_user_id: string;
+  amount_cents: number;
+};
 
 /**
  * Everyone who can appear as payer or split participant on eligible expenses,
@@ -16,12 +23,14 @@ export function buildCounterpartyRows(
 ): GroupMemberRow[] {
   const byId = new Map(members.map((m) => [m.user_id, m]));
   const ids = new Set<string>();
+
   for (const e of eligibleExpenses) {
     ids.add(e.paid_by_user_id);
     for (const s of e.splits || []) {
       ids.add(s.user_id);
     }
   }
+
   ids.delete(meId);
 
   const out: GroupMemberRow[] = [];
@@ -39,6 +48,7 @@ export function buildCounterpartyRows(
       });
     }
   }
+
   out.sort((a, b) => memberLabel(a).localeCompare(memberLabel(b)));
   return out;
 }
@@ -47,20 +57,28 @@ export function computePairwiseNetVsMe(
   meId: string,
   members: GroupMemberRow[],
   eligibleExpenses: GroupExpenseRow[],
+  settlements: SettlementRow[],
 ): PairwiseNetRow[] {
   const counterparties = buildCounterpartyRows(meId, members, eligibleExpenses);
+
+  const ledger = computeLedger({
+    currentUserId: meId,
+    expenses: eligibleExpenses,
+    settlements,
+  });
+
   const out: PairwiseNetRow[] = [];
+
   for (const m of counterparties) {
-    let netIOwe = 0;
-    for (const e of eligibleExpenses) {
-      const splits = e.splits || [];
-      const myShare = splits.find((s) => s.user_id === meId)?.share_cents ?? 0;
-      const theirShare = splits.find((s) => s.user_id === m.user_id)?.share_cents ?? 0;
-      if (e.paid_by_user_id === m.user_id) netIOwe += myShare;
-      if (e.paid_by_user_id === meId) netIOwe -= theirShare;
+    const net = ledger.get(m.user_id) || 0;
+    if (net !== 0) {
+      out.push({
+        member: m,
+        netIOCents: net,
+      });
     }
-    if (netIOwe !== 0) out.push({ member: m, netIOCents: netIOwe });
   }
+
   out.sort((a, b) => Math.abs(b.netIOCents) - Math.abs(a.netIOCents));
   return out;
 }

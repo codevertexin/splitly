@@ -16,6 +16,7 @@ export * from './services/billing.service';
 export * from './services/featureInterest.service';
 
 export { useFeatureAccess } from './hooks/useFeatureAccess';
+export { useFeatureInterestRegistered } from './hooks/useFeatureInterestRegistered';
 export { useUpgrade, useCheckoutReturnEffect } from './hooks/useUpgrade';
 export { useGuardPremiumAction } from './hooks/useGuardPremiumAction';
 export type { BillingGuardApi } from './hooks/useGuardPremiumAction';

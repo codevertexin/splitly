@@ -8,7 +8,7 @@ import { supabase } from '../../lib/supabase';
 import { Card } from '../../components/ui/Card';
 import { Button } from '../../components/ui/Button';
 import { Modal } from '../../components/ui/Modal';
-import type { UserContact } from '../../types';
+import type { UserContact } from '../../dbAliases';
 import { useNavigate } from 'react-router-dom';
 
 type Filter = 'all' | 'active' | 'blocked';

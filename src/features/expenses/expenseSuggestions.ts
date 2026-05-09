@@ -1,4 +1,4 @@
-import { Expense } from '../../types';
+import type { Expense } from '../../dbAliases';
 
 export type ExpenseSuggestion = {
   id: string;

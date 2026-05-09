@@ -644,6 +644,7 @@ export function CreateExpenseForm({
         onOcrInterestClick={handleOcrInterestClick}
         disablePhoto={loading}
         disableOcr={loading}
+        scanReceiptInterestUserId={session?.user?.id ?? null}
       />
       
       <Input

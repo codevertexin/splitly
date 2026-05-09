@@ -4,6 +4,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { createExpenseCanonical } from '../_shared/finance/engine/createExpenseCanonical.ts';
 import type { CreateExpenseCanonicalInput } from '../_shared/finance/types.ts';
 import { computeDebtsToPayer } from '../_shared/finance/engine/settlementAware.ts';
+import { getActiveBatchIdForGroup } from '../_shared/activeBatch.ts';
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -12,6 +13,24 @@ const corsHeaders = {
 };
 
 type Json = Record<string, unknown>;
+
+function optionalReceiptColumns(body: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  if (Object.prototype.hasOwnProperty.call(body, 'receipt_path')) {
+    out.receipt_path = (body.receipt_path as string | null) ?? null;
+  }
+  if (Object.prototype.hasOwnProperty.call(body, 'receipt_filename')) {
+    out.receipt_filename = (body.receipt_filename as string | null) ?? null;
+  }
+  if (Object.prototype.hasOwnProperty.call(body, 'receipt_mime_type')) {
+    out.receipt_mime_type = (body.receipt_mime_type as string | null) ?? null;
+  }
+  if (Object.prototype.hasOwnProperty.call(body, 'receipt_size_bytes')) {
+    const n = body.receipt_size_bytes;
+    out.receipt_size_bytes = typeof n === 'number' && Number.isFinite(n) ? n : null;
+  }
+  return out;
+}
 
 function json(data: Json, init: ResponseInit = {}) {
   return new Response(JSON.stringify(data), {
@@ -66,7 +85,7 @@ if (req.method !== "POST") {
       return json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const body = await req.json();
+    const body = (await req.json()) as Record<string, unknown>;
 
     const groupId = body.group_id as string;
     const eventId = (body.event_id as string | null | undefined) ?? null;
@@ -99,7 +118,10 @@ if (req.method !== "POST") {
       return json({ error: 'paid_by_user_id is required' }, { status: 400 });
     }
 
-    if (!Array.isArray(participants) || participants.length === 0) {
+    if (!Array.isArray(participants)) {
+      return json({ error: 'participants are required' }, { status: 400 });
+    }
+    if (eventId && participants.length === 0) {
       return json({ error: 'participants are required' }, { status: 400 });
     }
 
@@ -135,7 +157,24 @@ if (req.method !== "POST") {
       return json({ error: 'paid_by_user_id is not an active group member' }, { status: 400 });
     }
 
-    for (const participantId of participants) {
+    const allActiveSorted = Array.from(activeMemberIds).sort();
+    const effectiveParticipants = eventId ? participants : allActiveSorted;
+
+    if (!eventId && participants.length > 0) {
+      const reqSorted = [...participants].sort().join('|');
+      const fullSorted = allActiveSorted.join('|');
+      if (reqSorted !== fullSorted) {
+        return json(
+          {
+            error:
+              'Group expenses (no event) must include all active members; participant list is determined by the server',
+          },
+          { status: 400 },
+        );
+      }
+    }
+
+    for (const participantId of effectiveParticipants) {
       if (!activeMemberIds.has(participantId)) {
         return json(
           { error: `participant ${participantId} is not an active group member` },
@@ -202,21 +241,27 @@ const debtsToPayer =
       })
     : {};
 
-const engineInput: CreateExpenseCanonicalInput = {
-  groupId,
-  eventId,
-  paidByUserId,
-  participants,
-  requestedSplitMethod,
-  amountCents,
-  statusIntent,
-  manualShares,
-  percentageShares,
-  description,
-  explicitAffectsBalancesIntent,
-  eventStatus,
-  debtsToPayer,
-};
+    const batchRes = await getActiveBatchIdForGroup(adminClient, groupId);
+    if ('error' in batchRes) {
+      return json({ error: batchRes.error }, { status: 400 });
+    }
+    const batchId = batchRes.batchId;
+
+    const engineInput: CreateExpenseCanonicalInput = {
+      groupId,
+      eventId,
+      paidByUserId,
+      participants: effectiveParticipants,
+      requestedSplitMethod,
+      amountCents,
+      statusIntent,
+      manualShares,
+      percentageShares,
+      description,
+      explicitAffectsBalancesIntent,
+      eventStatus,
+      debtsToPayer,
+    };
 
     const canonical = createExpenseCanonical(engineInput);
 
@@ -224,6 +269,7 @@ const engineInput: CreateExpenseCanonicalInput = {
   .from('expenses')
   .insert({
     group_id: groupId,
+    batch_id: batchId,
     event_id: eventId,
     title,
     description,
@@ -240,6 +286,7 @@ const engineInput: CreateExpenseCanonicalInput = {
     calculation_trace: canonical.calculationTrace,
     balance_impact_summary: canonical.balanceImpactSummary,
     created_by: user.id,
+    ...optionalReceiptColumns(body),
   })
   .select('*')
   .single();

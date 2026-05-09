@@ -44,7 +44,13 @@ interface CreateExpenseModalProps {
   membersLoading: boolean;
   membersError: string | null;
   actionLoading: boolean;
-  createExpense: (input: CreateExpenseInput) => Promise<{ success: boolean; error?: string }>;
+  receipt_path?: string | null;
+  receipt_filename?: string | null;
+  receipt_mime_type?: string | null;
+  receipt_size_bytes?: number | null;
+  createExpense: (
+    input: CreateExpenseInput,
+  ) => Promise<{ success: boolean; expenseId?: string | null; error?: string }>;
   /** Called after an expense is created successfully (e.g. refresh balances). */
   onExpenseCreated?: () => void;
 }
@@ -260,12 +266,6 @@ export function CreateExpenseModal({
     window.addEventListener(EXPENSES_CHANGED_EVENT, onChanged);
     return () => window.removeEventListener(EXPENSES_CHANGED_EVENT, onChanged);
   }, [groupId, loadDebtsToCurrentUser]);
-
-  const toggleParticipant = (userId: string) => {
-    setParticipantIds((prev) =>
-      prev.includes(userId) ? prev.filter((id) => id !== userId) : [...prev, userId]
-    );
-  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -568,6 +568,7 @@ export function CreateExpenseModal({
           onOcrInterestClick={handleOcrInterestClick}
           disablePhoto={actionLoading}
           disableOcr={actionLoading}
+          scanReceiptInterestUserId={session.user.id}
         />
 
         <div className="space-y-1">
@@ -589,19 +590,13 @@ export function CreateExpenseModal({
 
         <div className="space-y-2">
           <span className="block text-sm font-semibold text-slate-700">{t('groupExpense.participantsLabel')}</span>
+          <p className="text-xs text-slate-500">{t('groupExpense.groupWideParticipantsHint')}</p>
           <div className="flex flex-wrap gap-2">
             {members.map((m) => (
-              <label
+              <div
                 key={m.user_id}
-                className="inline-flex items-center gap-2.5 px-3 py-2 rounded-xl border border-slate-100 bg-slate-50 cursor-pointer text-sm max-w-full"
+                className="inline-flex items-center gap-2.5 px-3 py-2 rounded-xl border border-slate-100 bg-slate-50 text-sm max-w-full"
               >
-                <input
-                  type="checkbox"
-                  className="rounded border-slate-300 text-blue-600 focus:ring-blue-500 shrink-0"
-                  checked={participantIds.includes(m.user_id)}
-                  onChange={() => toggleParticipant(m.user_id)}
-                  disabled={disabled}
-                />
                 <MemberAvatar
                   userId={m.user_id}
                   fullName={m.full_name}
@@ -609,7 +604,7 @@ export function CreateExpenseModal({
                   size="sm"
                 />
                 <span className="font-medium text-slate-800 truncate">{memberLabel(m)}</span>
-              </label>
+              </div>
             ))}
           </div>
         </div>

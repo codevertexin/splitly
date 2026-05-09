@@ -22,7 +22,7 @@ import {
   Wallet,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Group } from '../../../types';
+import type { Group } from '../../../dbAliases';
 import { GroupExpenseRow } from '../../../hooks/useGroupExpenses';
 import { GroupMemberRow, memberLabel } from '../../../hooks/useGroupMembers';
 import { Button } from '../../../components/ui/Button';
@@ -40,6 +40,14 @@ interface GroupDetailProps {
   membersLoading: boolean;
   expenses: GroupExpenseRow[];
   allExpenses: GroupExpenseRow[];
+  activeBatchPreview?: {
+    id: string;
+    title: string;
+    description: string | null;
+    is_active: boolean;
+    closed_at: string | null;
+    created_at: string | null;
+  } | null;
   settlements: Array<{
     id: string;
     group_id: string;
@@ -68,6 +76,9 @@ interface GroupDetailProps {
   isOwner?: boolean;
   onManageGroup?: () => void;
   onOpenAddExpense: () => void;
+  /** Opens the owner flow to name the next cycle and close the current one (handled in GroupDetailPage). */
+  onOpenCloseBatchModal?: () => void;
+  closingCurrentBatch?: boolean;
   onRequestPayment?: (targetUserId: string, amountCents: number, targetName: string) => Promise<void> | void;
   canEditExpense: (expense: GroupExpenseRow) => boolean;
   onEditExpense: (expense: GroupExpenseRow) => void;
@@ -117,6 +128,18 @@ type ExpenseSection = {
   participantIds: Set<string>;
 };
 
+type BatchSection = {
+  batchId: string | null;
+  title: string;
+  description?: string | null;
+  isActive: boolean;
+  closedAt?: string | null;
+  createdAtMs: number;
+  totalAmountCents: number;
+  expenseCount: number;
+  expenses: GroupExpenseRow[];
+};
+
 const PAGE_CHUNK = 35;
 
 function groupExpensesIntoSections(items: GroupExpenseRow[], t: (k: string) => string): ExpenseSection[] {
@@ -160,10 +183,59 @@ function groupExpensesIntoSections(items: GroupExpenseRow[], t: (k: string) => s
   return sections;
 }
 
+function groupExpensesIntoBatches(
+  items: GroupExpenseRow[],
+  t: (k: string) => string,
+): BatchSection[] {
+  const map = new Map<string, BatchSection>();
+
+  for (const expense of items) {
+    const batchKey = expense.batch?.id ?? expense.batch_id ?? '__no_batch__';
+    const batchTitle = expense.batch?.title || t('groupDetail.batchFallbackTitle');
+
+    if (!map.has(batchKey)) {
+      map.set(batchKey, {
+        batchId: batchKey === '__no_batch__' ? null : batchKey,
+        title: batchTitle,
+        description: expense.batch?.description ?? null,
+        isActive: expense.batch?.is_active ?? false,
+        closedAt: expense.batch?.closed_at ?? null,
+        createdAtMs: expense.batch?.created_at
+          ? new Date(expense.batch.created_at).getTime()
+          : 0,
+        totalAmountCents: 0,
+        expenseCount: 0,
+        expenses: [],
+      });
+    }
+
+    const batch = map.get(batchKey)!;
+    batch.expenses.push(expense);
+    batch.totalAmountCents += expense.amount_cents;
+    batch.expenseCount += 1;
+  }
+
+  const result = Array.from(map.values());
+
+  for (const batch of result) {
+    batch.expenses.sort(
+      (a, b) => new Date(b.incurred_at).getTime() - new Date(a.incurred_at).getTime(),
+    );
+  }
+
+  result.sort((a, b) => {
+    if (a.isActive !== b.isActive) return a.isActive ? -1 : 1;
+    return b.createdAtMs - a.createdAtMs;
+  });
+
+  return result;
+}
+
 function applyExpenseFilters(
   list: GroupExpenseRow[],
   filterEventId: string,
   filterMemberId: string,
+  opts?: { payerOnly?: boolean },
 ): GroupExpenseRow[] {
   return list.filter((e) => {
     if (filterEventId !== 'all') {
@@ -173,17 +245,15 @@ function applyExpenseFilters(
     }
     if (filterMemberId !== 'all') {
       const payer = e.paid_by_user_id === filterMemberId;
-      const inSplit = (e.splits || []).some((s) => s.user_id === filterMemberId);
-      if (!payer && !inSplit) return false;
+      if (opts?.payerOnly) {
+        if (!payer) return false;
+      } else {
+        const inSplit = (e.splits || []).some((s) => s.user_id === filterMemberId);
+        if (!payer && !inSplit) return false;
+      }
     }
     return true;
   });
-}
-
-function eventStatusLabel(status: string, t: (k: string) => string) {
-  if (status === 'draft') return t('groupDetail.eventStatusDraft');
-  if (status === 'closed') return t('groupDetail.eventStatusClosed');
-  return t('groupDetail.eventStatusOpen');
 }
 
 export function GroupDetail({
@@ -193,6 +263,7 @@ export function GroupDetail({
   membersLoading,
   expenses,
   allExpenses,
+  activeBatchPreview,
   expensesLoading,
   yourBalanceCents,
   balanceLoading,
@@ -212,6 +283,8 @@ export function GroupDetail({
   isOwner = false,
   onManageGroup,
   onOpenAddExpense,
+  onOpenCloseBatchModal,
+  closingCurrentBatch = false,
   onRequestPayment,
   canEditExpense,
   onEditExpense,
@@ -240,12 +313,14 @@ const [selectedSettleRow, setSelectedSettleRow] = useState<{
 } | null>(null);
   const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({});
   const sectionStateKey = `splitly_group_expanded_sections_v2_${group.id}`;
+  const historySubtabStateKey = `splitly_group_history_subtab_v1_${group.id}`;
   const [filterEventId, setFilterEventId] = useState<string>('all');
   const [filterMemberId, setFilterMemberId] = useState<string>('all');
   const [statusFilter, setStatusFilter] = useState<'all' | 'draft' | 'confirmed'>('all');
   const [confirmedLimit, setConfirmedLimit] = useState(PAGE_CHUNK);
   const [draftLimit, setDraftLimit] = useState(PAGE_CHUNK);
-  const [detailTab, setDetailTab] = useState<'overview' | 'expenses' | 'members'>('overview');
+  const [detailTab, setDetailTab] = useState<'overview' | 'expenses' | 'history' | 'members'>('overview');
+  const [historySubtab, setHistorySubtab] = useState<'group_expenses' | 'events'>('group_expenses');
   const [memberSearch, setMemberSearch] = useState('');
   /** After navigating to a group, apply default tab once the expense list has loaded. */
   const pendingInitialTabRef = useRef(true);
@@ -259,98 +334,169 @@ const [selectedSettleRow, setSelectedSettleRow] = useState<{
           ? 'es-ES'
           : 'en-IE';
 
-  const formatMoney = (cents: number) => formatCurrencyCents(cents, { locale });
+          const formatMoney = (cents: number) => formatCurrencyCents(cents, { locale });
 
-  const confirmedIds = useMemo(() => new Set(expenses.map((e) => e.id)), [expenses]);
+          const confirmedIds = useMemo(
+            () => new Set(expenses.map((e) => e.id)),
+            [expenses],
+          );
+        
+          /** Sem despesas nenhumas no grupo: mostrar onboarding. */
+          const showFinancialOnboarding = !expensesLoading && allExpenses.length === 0;
+        
+          /** Separação principal: batch ativo = despesas atuais; batch fechado = histórico */
+          const activeBatchExpenses = useMemo(
+            () => allExpenses.filter((e) => e.batch?.is_active === true),
+            [allExpenses],
+          );
+        
+          const historicalExpenses = useMemo(
+            () => allExpenses.filter((e) => e.batch?.is_active === false),
+            [allExpenses],
+          );
+        
+          /** Na tab "Despesas", drafts/confirmed são apenas do batch ativo */
+          const activeDraftExpenses = useMemo(
+            () => activeBatchExpenses.filter((e) => !confirmedIds.has(e.id)),
+            [activeBatchExpenses, confirmedIds],
+          );
+        
+          const activeConfirmedExpenses = useMemo(
+            () => activeBatchExpenses.filter((e) => confirmedIds.has(e.id)),
+            [activeBatchExpenses, confirmedIds],
+          );
+        
+          const eventOptions = useMemo(() => {
+            const map = new Map<string, string>();
+            for (const e of allExpenses) {
+              if (e.event?.id && e.event.title) map.set(e.event.id, e.event.title);
+            }
+            return Array.from(map.entries()).sort((a, b) => a[1].localeCompare(b[1]));
+          }, [allExpenses]);
+        
+          const draftFiltered = useMemo(
+            () => applyExpenseFilters(activeDraftExpenses, filterEventId, filterMemberId),
+            [activeDraftExpenses, filterEventId, filterMemberId],
+          );
+        
+          const confirmedFiltered = useMemo(
+            () => applyExpenseFilters(activeConfirmedExpenses, filterEventId, filterMemberId),
+            [activeConfirmedExpenses, filterEventId, filterMemberId],
+          );
+        
+          const historicalFilteredForSubtab = useMemo(
+            () =>
+              applyExpenseFilters(
+                historicalExpenses,
+                historySubtab === 'events' ? filterEventId : 'all',
+                filterMemberId,
+                { payerOnly: historySubtab === 'group_expenses' },
+              ),
+            [historicalExpenses, historySubtab, filterEventId, filterMemberId],
+          );
 
-  /** Sem despesas contabilísticas confirmadas: mostrar onboarding em vez de saldo “vazio”. */
-  const showFinancialOnboarding = !expensesLoading && expenses.length === 0;
+          const historicalGroupExpenses = useMemo(
+            () => historicalFilteredForSubtab.filter((e) => !e.event?.id),
+            [historicalFilteredForSubtab],
+          );
 
-  const draftExpensesAll = useMemo(
-    () => allExpenses.filter((e) => !confirmedIds.has(e.id)),
-    [allExpenses, confirmedIds],
+          const historicalEventExpenses = useMemo(
+            () => historicalFilteredForSubtab.filter((e) => Boolean(e.event?.id)),
+            [historicalFilteredForSubtab],
+          );
+        
+          const draftFlatSorted = useMemo(() => {
+            const list = [...draftFiltered];
+            list.sort((a, b) => new Date(b.incurred_at).getTime() - new Date(a.incurred_at).getTime());
+            return list;
+          }, [draftFiltered]);
+        
+          const confirmedFlatSorted = useMemo(() => {
+            const list = [...confirmedFiltered];
+            list.sort((a, b) => new Date(b.incurred_at).getTime() - new Date(a.incurred_at).getTime());
+            return list;
+          }, [confirmedFiltered]);
+        
+          const draftVisibleFlat = useMemo(
+            () => draftFlatSorted.slice(0, draftLimit),
+            [draftFlatSorted, draftLimit],
+          );
+        
+          const confirmedVisibleFlat = useMemo(
+            () => confirmedFlatSorted.slice(0, confirmedLimit),
+            [confirmedFlatSorted, confirmedLimit],
+          );
+        
+          const groupedDraftSections = useMemo(
+            () => groupExpensesIntoSections(draftVisibleFlat, (k) => t(k)),
+            [draftVisibleFlat, t],
+          );
+        
+          const groupedConfirmedSections = useMemo(
+            () => groupExpensesIntoSections(confirmedVisibleFlat, (k) => t(k)),
+            [confirmedVisibleFlat, t],
+          );
+        
+          const groupedHistoricalGroupBatches = useMemo(
+            () => groupExpensesIntoBatches(historicalGroupExpenses, (k) => t(k)),
+            [historicalGroupExpenses, t],
+          );
+
+          const groupedHistoricalEventBatches = useMemo(() => {
+            const batches = groupExpensesIntoBatches(historicalEventExpenses, (k) => t(k));
+            return batches.map((batch) => ({
+              batch,
+              eventSections: groupExpensesIntoSections(batch.expenses, (k) => t(k)),
+            }));
+          }, [historicalEventExpenses, t]);
+
+          const currentActiveBatch = useMemo(() => {
+            const grouped = groupExpensesIntoBatches(activeBatchExpenses, (k) => t(k));
+            const fromExpenses = grouped.find((b) => b.isActive);
+            if (fromExpenses) return fromExpenses;
+            if (!activeBatchPreview?.is_active) return null;
+            return {
+              batchId: activeBatchPreview.id,
+              title: activeBatchPreview.title,
+              description: activeBatchPreview.description,
+              isActive: true,
+              closedAt: activeBatchPreview.closed_at,
+              createdAtMs: activeBatchPreview.created_at
+                ? new Date(activeBatchPreview.created_at).getTime()
+                : 0,
+              totalAmountCents: 0,
+              expenseCount: 0,
+              expenses: [],
+            };
+          }, [activeBatchExpenses, activeBatchPreview, t]);
+
+          /** Soma bruta das despesas no ciclo ativo (alinha com o cartão no separador Despesas). */
+          const activeCycleGrossTotalCents = useMemo(
+            () => activeBatchExpenses.reduce((sum, e) => sum + e.amount_cents, 0),
+            [activeBatchExpenses],
+          );
+
+          const openCycleBreakdownLine = useMemo(() => {
+            if (expensesLoading) return null;
+            if (activeBatchExpenses.length === 0) return t('groupDetail.openCycleBreakdownNone');
+            const hasGroup = activeBatchExpenses.some((e) => !e.event?.id);
+            const hasEvent = activeBatchExpenses.some((e) => Boolean(e.event?.id));
+            if (hasGroup && hasEvent) return t('groupDetail.openCycleBreakdownBoth');
+            if (hasEvent) return t('groupDetail.openCycleBreakdownEventsOnly');
+            return t('groupDetail.openCycleBreakdownGroupOnly');
+          }, [activeBatchExpenses, expensesLoading, t]);
+
+  const pairwiseRows = useMemo(
+    () => computePairwiseNetVsMe(currentUserId, members, expenses, settlements),
+    [currentUserId, members, expenses, settlements],
   );
 
-  const eventOptions = useMemo(() => {
-    const map = new Map<string, string>();
-    for (const e of allExpenses) {
-      if (e.event?.id && e.event.title) map.set(e.event.id, e.event.title);
-    }
-    return Array.from(map.entries()).sort((a, b) => a[1].localeCompare(b[1]));
-  }, [allExpenses]);
-
-  const draftFiltered = useMemo(
-    () => applyExpenseFilters(draftExpensesAll, filterEventId, filterMemberId),
-    [draftExpensesAll, filterEventId, filterMemberId],
-  );
-
-  const confirmedFiltered = useMemo(
-    () => applyExpenseFilters(expenses, filterEventId, filterMemberId),
-    [expenses, filterEventId, filterMemberId],
-  );
-
-  const draftFlatSorted = useMemo(() => {
-    const list = [...draftFiltered];
-    list.sort((a, b) => new Date(b.incurred_at).getTime() - new Date(a.incurred_at).getTime());
-    return list;
-  }, [draftFiltered]);
-
-  const confirmedFlatSorted = useMemo(() => {
-    const list = [...confirmedFiltered];
-    list.sort((a, b) => new Date(b.incurred_at).getTime() - new Date(a.incurred_at).getTime());
-    return list;
-  }, [confirmedFiltered]);
-
-  const draftVisibleFlat = useMemo(() => draftFlatSorted.slice(0, draftLimit), [draftFlatSorted, draftLimit]);
-  const confirmedVisibleFlat = useMemo(
-    () => confirmedFlatSorted.slice(0, confirmedLimit),
-    [confirmedFlatSorted, confirmedLimit],
-  );
-
-  const groupedDraftSections = useMemo(
-    () => groupExpensesIntoSections(draftVisibleFlat, (k) => t(k)),
-    [draftVisibleFlat, t],
-  );
-
-  const groupedConfirmedSections = useMemo(
-    () => groupExpensesIntoSections(confirmedVisibleFlat, (k) => t(k)),
-    [confirmedVisibleFlat, t],
-  );
-
-  const pairwiseRows = useMemo(() => {
-    const baseRows = computePairwiseNetVsMe(currentUserId, members, expenses);
-    const settlementDeltaByUserId = new Map<string, number>();
-  
-    for (const settlement of settlements) {
-      if (settlement.from_user_id === currentUserId) {
-        settlementDeltaByUserId.set(
-          settlement.to_user_id,
-          (settlementDeltaByUserId.get(settlement.to_user_id) || 0) - settlement.amount_cents,
-        );
-      }
-  
-      if (settlement.to_user_id === currentUserId) {
-        settlementDeltaByUserId.set(
-          settlement.from_user_id,
-          (settlementDeltaByUserId.get(settlement.from_user_id) || 0) + settlement.amount_cents,
-        );
-      }
-    }
-  
-    return baseRows
-      .map((row) => ({
-        ...row,
-        netIOCents: row.netIOCents + (settlementDeltaByUserId.get(row.member.user_id) || 0),
-      }))
-      .filter((row) => row.netIOCents !== 0);
-  }, [currentUserId, members, expenses, settlements]);
-
-  const youOweThem = useMemo(
+  const theyOweYou = useMemo(
     () => pairwiseRows.filter((r) => r.netIOCents > 0).sort((a, b) => b.netIOCents - a.netIOCents),
     [pairwiseRows],
   );
 
-  const theyOweYou = useMemo(
+  const youOweThem = useMemo(
     () => pairwiseRows.filter((r) => r.netIOCents < 0).sort((a, b) => a.netIOCents - b.netIOCents),
     [pairwiseRows],
   );
@@ -390,6 +536,17 @@ const [selectedSettleRow, setSelectedSettleRow] = useState<{
     return t('groupDetail.balanceLineZero');
   }, [balanceLoading, balanceError, yourBalanceCents, theyOweYou.length, youOweThem.length, t]);
 
+  const detailTabs = useMemo(
+    () =>
+      [
+        { id: 'overview' as const, icon: LayoutGrid, label: t('groupDetail.tabOverview') },
+        { id: 'expenses' as const, icon: Wallet, label: t('groupDetail.tabExpenses') },
+        { id: 'history' as const, icon: Receipt, label: t('groupDetail.tabHistory') },
+        { id: 'members' as const, icon: Users, label: t('groupDetail.tabMembers') },
+      ] as const,
+    [t],
+  );
+
   const toggleSection = (prefix: string, sectionKey: string) => {
     const k = `${prefix}:${sectionKey}`;
     setExpandedSections((prev) => ({
@@ -423,6 +580,27 @@ const [selectedSettleRow, setSelectedSettleRow] = useState<{
   }, [filterEventId, filterMemberId, statusFilter, group.id]);
 
   useEffect(() => {
+    try {
+      const raw = localStorage.getItem(historySubtabStateKey);
+      if (raw === 'group_expenses' || raw === 'events') {
+        setHistorySubtab(raw);
+        return;
+      }
+    } catch {
+      // ignore
+    }
+    setHistorySubtab('group_expenses');
+  }, [historySubtabStateKey]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(historySubtabStateKey, historySubtab);
+    } catch {
+      // ignore
+    }
+  }, [historySubtabStateKey, historySubtab]);
+
+  useEffect(() => {
     pendingInitialTabRef.current = true;
     setMemberSearch('');
   }, [group.id]);
@@ -434,7 +612,9 @@ const [selectedSettleRow, setSelectedSettleRow] = useState<{
 
   useEffect(() => {
     if (expensesLoading || !pendingInitialTabRef.current) return;
+
     pendingInitialTabRef.current = false;
+
     setDetailTab((current) => {
       if (current !== 'overview') return current;
       return hasExpensesForGroup ? 'expenses' : 'overview';
@@ -463,6 +643,34 @@ const [selectedSettleRow, setSelectedSettleRow] = useState<{
     if (start && end) return t('groupDetail.eventDateShort', { start, end });
     if (start) return t('groupDetail.eventDateStart', { date: start });
     return null;
+  };
+
+  /** No separador Despesas: eventos abertos mostram a data em vez do estado «Aberto». */
+  const renderEventSectionBadge = (ev: NonNullable<ExpenseSection['eventMeta']>) => {
+    const dateLine = formatEventDates(ev);
+    if (ev.status === 'open') {
+      if (!dateLine) return null;
+      return (
+        <span className="inline-flex max-w-full items-center gap-1 rounded-md bg-slate-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-slate-700">
+          <Calendar className="h-3 w-3 shrink-0" aria-hidden />
+          <span className="truncate normal-case">{dateLine}</span>
+        </span>
+      );
+    }
+    if (ev.status === 'draft') {
+      return (
+        <span className="inline-flex max-w-full flex-wrap items-center gap-x-1 rounded-md bg-amber-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-950">
+          {t('groupDetail.eventStatusDraft')}
+          {dateLine ? <span className="font-semibold normal-case">· {dateLine}</span> : null}
+        </span>
+      );
+    }
+    return (
+      <span className="inline-flex max-w-full flex-wrap items-center gap-x-1 rounded-md bg-slate-200 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-slate-700">
+        {t('groupDetail.eventStatusClosed')}
+        {dateLine ? <span className="font-semibold normal-case">· {dateLine}</span> : null}
+      </span>
+    );
   };
 
   const renderExpenseRow = (expense: GroupExpenseRow, opts: { readOnlyDraft: boolean; sectionPrefix: string }) => {
@@ -547,7 +755,7 @@ const [selectedSettleRow, setSelectedSettleRow] = useState<{
 
   const renderSectionBlock = (
     section: ExpenseSection,
-    opts: { prefix: 'draft' | 'confirmed'; readOnlyDraft: boolean },
+    opts: { prefix: string; readOnlyDraft: boolean },
   ) => {
     const { prefix, readOnlyDraft } = opts;
     const sectionKey = section.eventId ?? '__ungrouped__';
@@ -576,19 +784,21 @@ const [selectedSettleRow, setSelectedSettleRow] = useState<{
         >
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-2">
-              <p className="truncate text-base font-semibold text-slate-900">{section.title}</p>
-              {ev?.status && (
-                <span
-                  className={`rounded-md px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${
-                    ev.status === 'closed'
-                      ? 'bg-slate-200 text-slate-700'
-                      : ev.status === 'draft'
-                        ? 'bg-amber-200 text-amber-950'
-                        : 'bg-emerald-100 text-emerald-900'
-                  }`}
-                >
-                  {eventStatusLabel(ev.status, (k) => t(k))}
-                </span>
+              {section.type === 'event' && ev ? (
+                <>
+                  <p className="shrink-0 text-base font-semibold text-slate-900">{t('groupDetail.withEvent')}</p>
+                  {ev.title || section.title ? (
+                    <p
+                      className="min-w-0 truncate text-base font-semibold text-slate-800"
+                      title={ev.title || section.title}
+                    >
+                      {ev.title || section.title}
+                    </p>
+                  ) : null}
+                  {renderEventSectionBadge(ev)}
+                </>
+              ) : (
+                <p className="truncate text-base font-semibold text-slate-900">{section.title}</p>
               )}
             </div>
             <p className="mt-1.5 text-xs font-semibold text-slate-700">
@@ -600,27 +810,21 @@ const [selectedSettleRow, setSelectedSettleRow] = useState<{
                   ? t('groupDetail.participantsCountOne')
                   : t('groupDetail.participantsCount', { count: section.participantIds.size })}
             </p>
-            {ev && (ev.starts_at || ev.ends_at) && (
-  <p className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-slate-500">
-    <span className="inline-flex items-center gap-1">
-      <Calendar className="h-3 w-3" />
-      {formatEventDates(ev)}
-    </span>
-    {onNavigateToEvent && ev.id && (
-      <button
-        type="button"
-        onClick={(e) => {
-          e.stopPropagation();
-          onNavigateToEvent(ev.id);
-        }}
-        className="inline-flex items-center gap-0.5 font-semibold text-blue-600 hover:text-blue-700"
-      >
-        {t('groupDetail.viewEvent')}
-        <ExternalLink className="h-3 w-3" />
-      </button>
-    )}
-  </p>
-)}
+            {ev?.id && onNavigateToEvent && (
+              <p className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-slate-500">
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onNavigateToEvent(ev.id);
+                  }}
+                  className="inline-flex items-center gap-0.5 font-semibold text-blue-600 hover:text-blue-700"
+                >
+                  {t('groupDetail.viewEvent')}
+                  <ExternalLink className="h-3 w-3" />
+                </button>
+              </p>
+            )}
           </div>
           <div className="flex shrink-0 items-center gap-3">
             {isExpanded ? (
@@ -637,6 +841,156 @@ const [selectedSettleRow, setSelectedSettleRow] = useState<{
               renderExpenseRow(expense, { readOnlyDraft, sectionPrefix: expandKey }),
             )}
           </ul>
+        )}
+      </div>
+    );
+  };
+
+  const renderBatchBlock = (
+    batch: BatchSection,
+    opts: { prefix: string; readOnlyDraft: boolean },
+  ) => {
+    const { prefix, readOnlyDraft } = opts;
+    const batchKey = batch.batchId ?? '__no_batch__';
+    const expandKey = `${prefix}:batch:${batchKey}`;
+    const isExpanded = expandedSections[expandKey] ?? true;
+    const batchHasEditableExpense = batch.expenses.some((e) => canEditExpense(e));
+
+    return (
+      <div
+        key={expandKey}
+        className={`overflow-hidden rounded-2xl border shadow-sm ${
+          readOnlyDraft ? 'border-amber-200/90 bg-amber-50/25' : 'border-slate-200/90 bg-white'
+        }`}
+      >
+        <button
+          type="button"
+          onClick={() => toggleSection(`${prefix}:batch`, batchKey)}
+          className={`flex w-full items-start gap-3 border-b px-4 py-4 text-left transition-colors sm:gap-4 sm:px-5 sm:py-4 ${
+            readOnlyDraft
+              ? 'border-amber-200/80 bg-amber-50/90 hover:bg-amber-50'
+              : batchHasEditableExpense
+                ? 'border-sky-200 bg-sky-50 hover:bg-sky-100'
+                : 'border-slate-200/90 bg-slate-50/95 hover:bg-slate-50'
+          }`}
+        >
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center gap-2">
+              <p className="truncate text-base font-semibold text-slate-900">{batch.title}</p>
+  
+              {batch.isActive ? (
+                <span className="rounded-md bg-blue-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-blue-800">
+                  {t('groupDetail.batchActive')}
+                </span>
+              ) : (
+                <span className="rounded-md bg-slate-200 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-slate-700">
+                  {t('groupDetail.batchClosed')}
+                </span>
+              )}
+            </div>
+  
+            <p className="mt-1.5 text-xs font-semibold text-slate-700">
+              {formatMoney(batch.totalAmountCents)} · {batch.expenseCount} {t('groupDetail.expensesCountLabel')}
+            </p>
+
+            {batch.closedAt && !batch.isActive && (
+              <p className="mt-1 text-xs text-slate-500">
+                {t('groupDetail.batchClosedOn', { date: formatDateOnly(batch.closedAt, locale) })}
+              </p>
+            )}
+  
+            {batch.description && (
+              <p className="mt-1 text-xs text-slate-500">{batch.description}</p>
+            )}
+          </div>
+  
+          <div className="flex shrink-0 items-center gap-3">
+            {isExpanded ? (
+              <ChevronUp className="h-5 w-5 shrink-0 text-slate-400" />
+            ) : (
+              <ChevronDown className="h-5 w-5 shrink-0 text-slate-400" />
+            )}
+          </div>
+        </button>
+  
+        {isExpanded && (
+          <ul className="space-y-2 border-t border-slate-100/90 bg-slate-50/50 p-3 sm:p-4">
+            {batch.expenses.map((expense) =>
+              renderExpenseRow(expense, {
+                readOnlyDraft,
+                sectionPrefix: expandKey,
+              }),
+            )}
+          </ul>
+        )}
+      </div>
+    );
+  };
+
+  const renderHistoricalEventBatchGroup = (
+    batch: BatchSection,
+    eventSections: ExpenseSection[],
+    opts: { prefix: string; readOnlyDraft: boolean },
+  ) => {
+    const { prefix, readOnlyDraft } = opts;
+    const batchKey = batch.batchId ?? '__no_batch__';
+    const expandKey = `${prefix}:batch:${batchKey}`;
+    const isExpanded = expandedSections[expandKey] ?? true;
+    const batchHasEditableExpense = batch.expenses.some((e) => canEditExpense(e));
+
+    return (
+      <div
+        key={expandKey}
+        className={`overflow-hidden rounded-2xl border shadow-sm ${
+          readOnlyDraft ? 'border-amber-200/90 bg-amber-50/25' : 'border-slate-200/90 bg-white'
+        }`}
+      >
+        <button
+          type="button"
+          onClick={() => toggleSection(`${prefix}:batch`, batchKey)}
+          className={`flex w-full items-start gap-3 border-b px-4 py-4 text-left transition-colors sm:gap-4 sm:px-5 sm:py-4 ${
+            readOnlyDraft
+              ? 'border-amber-200/80 bg-amber-50/90 hover:bg-amber-50'
+              : batchHasEditableExpense
+                ? 'border-sky-200 bg-sky-50 hover:bg-sky-100'
+                : 'border-slate-200/90 bg-slate-50/95 hover:bg-slate-50'
+          }`}
+        >
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center gap-2">
+              <p className="truncate text-base font-semibold text-slate-900">{batch.title}</p>
+              <span className="rounded-md bg-slate-200 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-slate-700">
+                {t('groupDetail.batchClosed')}
+              </span>
+            </div>
+            <p className="mt-1.5 text-xs font-semibold text-slate-700">
+              {formatMoney(batch.totalAmountCents)} · {batch.expenseCount} {t('groupDetail.expensesCountLabel')}
+            </p>
+            {batch.closedAt && (
+              <p className="mt-1 text-xs text-slate-500">
+                {t('groupDetail.batchClosedOn', { date: formatDateOnly(batch.closedAt, locale) })}
+              </p>
+            )}
+            {batch.description && <p className="mt-1 text-xs text-slate-500">{batch.description}</p>}
+          </div>
+          <div className="flex shrink-0 items-center gap-3">
+            {isExpanded ? (
+              <ChevronUp className="h-5 w-5 shrink-0 text-slate-400" />
+            ) : (
+              <ChevronDown className="h-5 w-5 shrink-0 text-slate-400" />
+            )}
+          </div>
+        </button>
+
+        {isExpanded && (
+          <div className="space-y-4 border-t border-slate-100/90 bg-slate-50/50 p-3 sm:p-4">
+            {eventSections.map((section) =>
+              renderSectionBlock(section, {
+                prefix: `${prefix}:b:${batchKey}`,
+                readOnlyDraft,
+              }),
+            )}
+          </div>
         )}
       </div>
     );
@@ -737,10 +1091,13 @@ const [selectedSettleRow, setSelectedSettleRow] = useState<{
           {t('groupDetail.confirmSettleTitle')}
         </p>
         <p className="text-xs text-green-700">
-  {selectedSettleRow
-    ? `Vamos pedir a ${selectedSettleRow.targetName} para confirmar que recebeu ${formatMoney(selectedSettleRow.amountCents)}. Os saldos só serão atualizados depois da confirmação.`
-    : 'Vamos pedir confirmação do pagamento. Os saldos só serão atualizados depois da confirmação.'}
-</p>
+          {selectedSettleRow
+            ? t('groupDetail.confirmSettleRecipientBody', {
+                name: selectedSettleRow.targetName,
+                amount: formatMoney(selectedSettleRow.amountCents),
+              })
+            : t('groupDetail.confirmSettleGenericBody')}
+        </p>
       </div>
       <div className="flex gap-2">
         <Button
@@ -833,33 +1190,41 @@ const [selectedSettleRow, setSelectedSettleRow] = useState<{
             </div>
           )}
 
-          <div className="mb-6 flex gap-1 overflow-x-auto rounded-2xl border border-slate-100 bg-slate-50/90 p-1 shadow-sm sm:gap-2">
-            {(
-              [
-                { id: 'overview' as const, icon: LayoutGrid, label: t('groupDetail.tabOverview') },
-                { id: 'expenses' as const, icon: Wallet, label: t('groupDetail.tabExpenses') },
-                { id: 'members' as const, icon: Users, label: t('groupDetail.tabMembers') },
-              ] as const
-            ).map((tab) => (
-              <button
-                key={tab.id}
-                type="button"
-                onClick={() => setDetailTab(tab.id)}
-                className={`flex min-w-0 flex-1 items-center justify-center gap-2 rounded-xl px-3 py-2.5 text-sm font-bold transition-colors sm:flex-initial sm:px-4 ${
-                  detailTab === tab.id
-                    ? 'bg-white text-blue-700 shadow-sm ring-1 ring-slate-200/80'
-                    : 'text-slate-500 hover:bg-white/60 hover:text-slate-800'
-                }`}
-              >
-                <tab.icon className="h-4 w-4 shrink-0 opacity-90" aria-hidden />
-                <span className="truncate">{tab.label}</span>
-              </button>
-            ))}
+          <div
+            className="mb-6 grid grid-cols-2 gap-2 rounded-2xl border border-slate-200 bg-slate-100/90 p-2 shadow-sm sm:flex sm:flex-nowrap sm:gap-1.5 sm:overflow-x-auto sm:rounded-2xl sm:border-slate-100 sm:bg-slate-50/90 sm:p-1 sm:shadow-sm"
+            role="tablist"
+            aria-label={t('groupDetail.tabListAriaLabel')}
+          >
+            {detailTabs.map((tab) => {
+              const active = detailTab === tab.id;
+              return (
+                <button
+                  key={tab.id}
+                  type="button"
+                  role="tab"
+                  aria-selected={active}
+                  onClick={() => setDetailTab(tab.id)}
+                  className={`flex min-h-[4.25rem] flex-col items-center justify-center gap-1 rounded-xl px-2 py-2.5 text-center transition-all sm:min-h-0 sm:flex-row sm:gap-2 sm:px-4 sm:py-2.5 sm:shrink-0 sm:whitespace-nowrap ${
+                    active
+                      ? 'bg-white text-blue-700 shadow-md ring-2 ring-blue-500/35 sm:shadow-sm sm:ring-1 sm:ring-slate-200/80'
+                      : 'text-slate-600 hover:bg-white/80 hover:text-slate-900 active:scale-[0.99] sm:text-slate-500 sm:hover:bg-white/60 sm:hover:text-slate-800 sm:active:scale-100'
+                  }`}
+                >
+                  <tab.icon
+                    className={`h-5 w-5 shrink-0 sm:h-4 sm:w-4 ${active ? 'opacity-100' : 'opacity-80'}`}
+                    aria-hidden
+                  />
+                  <span className="px-0.5 text-center text-[11px] font-bold leading-snug sm:text-left sm:text-sm">
+                    {tab.label}
+                  </span>
+                </button>
+              );
+            })}
           </div>
 
           {detailTab === 'overview' && showFinancialOnboarding && (
             <GroupOnboardingHero
-              hasDrafts={draftExpensesAll.length > 0}
+              hasDrafts={activeDraftExpenses.length > 0}
               onAddExpense={onOpenAddExpense}
               onInvite={onInvite}
               onCreateEvent={onOpenCreateEvent}
@@ -868,7 +1233,8 @@ const [selectedSettleRow, setSelectedSettleRow] = useState<{
 
           {detailTab === 'overview' && !showFinancialOnboarding && (
             <>
-          <section className="mb-8 rounded-3xl border border-slate-200/90 bg-gradient-to-br from-slate-50 via-white to-slate-50/80 p-5 shadow-sm ring-1 ring-slate-100 sm:p-6">
+          <div className="mb-8 grid grid-cols-1 gap-4 lg:grid-cols-2 lg:items-stretch">
+          <section className="rounded-3xl border border-slate-200/90 bg-gradient-to-br from-slate-50 via-white to-slate-50/80 p-5 shadow-sm ring-1 ring-slate-100 sm:p-6">
             <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">{t('groupDetail.netPositionLabel')}</p>
             <p
               className={`mt-1.5 text-4xl font-extrabold tabular-nums tracking-tight sm:text-5xl ${
@@ -950,6 +1316,20 @@ const [selectedSettleRow, setSelectedSettleRow] = useState<{
               )}
             </div>
           </section>
+
+          <section className="rounded-3xl border border-slate-200/90 bg-gradient-to-br from-white via-slate-50/40 to-slate-50/90 p-5 shadow-sm ring-1 ring-slate-100 sm:p-6">
+            <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">
+              {t('groupDetail.openCycleTotalLabel')}
+            </p>
+            <p className="mt-1.5 text-4xl font-extrabold tabular-nums tracking-tight text-slate-800 sm:text-5xl">
+              {expensesLoading ? '…' : formatMoney(activeCycleGrossTotalCents)}
+            </p>
+            {openCycleBreakdownLine && (
+              <p className="mt-2 text-sm font-medium text-slate-600">{openCycleBreakdownLine}</p>
+            )}
+            <p className="mt-2 text-xs text-slate-500 leading-relaxed">{t('groupDetail.openCycleTotalFootnote')}</p>
+          </section>
+          </div>
 
           <section
             className={`mb-8 ${showFirstExpenseSuccessBanner && pairwiseRows.length > 0 ? 'rounded-2xl p-1 ring-2 ring-blue-400/35 ring-offset-2' : ''}`}
@@ -1053,7 +1433,7 @@ const [selectedSettleRow, setSelectedSettleRow] = useState<{
           <p className="min-w-0 flex-1 text-base font-medium leading-snug text-red-950">
             {t('groupDetail.youOweFull', {
               name: memberLabel(row.member),
-              amount: formatMoney(row.netIOCents),
+              amount: formatMoney(Math.abs(row.netIOCents)),
             })}
           </p>
           <button
@@ -1062,7 +1442,7 @@ const [selectedSettleRow, setSelectedSettleRow] = useState<{
               e.stopPropagation();
               setSelectedSettleRow({
                 targetUserId: row.member.user_id,
-                amountCents: row.netIOCents,
+                amountCents: Math.abs(row.netIOCents),
                 targetName: memberLabel(row.member),
               });
               setShowSettleConfirm(true);
@@ -1117,129 +1497,329 @@ const [selectedSettleRow, setSelectedSettleRow] = useState<{
             </>
           )}
 
-          {detailTab === 'expenses' && (
-            <>
-          {expensesLoading ? (
-            <div className="flex items-center justify-center py-16 text-slate-400">
-              <Loader2 className="mr-2 h-8 w-8 animate-spin" />
+{detailTab === 'expenses' && (
+  <>
+    {expensesLoading ? (
+      <div className="flex items-center justify-center py-16 text-slate-400">
+        <Loader2 className="mr-2 h-8 w-8 animate-spin" />
+      </div>
+    ) : activeBatchExpenses.length === 0 ? (
+      <div className="py-16 text-center">
+        <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-slate-100">
+          <Receipt className="h-7 w-7 text-slate-400" />
+        </div>
+        <h3 className="text-lg font-bold text-slate-900">{t('groupDetail.noExpenses')}</h3>
+        <p className="mx-auto mt-2 max-w-sm text-sm text-slate-500">
+          {t('groupDetail.noExpensesDescription')}
+        </p>
+        <Button
+          className="mt-5"
+          onClick={onOpenAddExpense}
+          disabled={!canAddExpense}
+          title={addExpenseDisabledHint}
+        >
+          {t('groupDetail.addFirstExpense')}
+        </Button>
+      </div>
+    ) : (
+      <div className="space-y-6">
+        <div
+          id="group-expenses"
+          className="flex flex-col gap-3 scroll-mt-24 sm:flex-row sm:items-end sm:justify-between"
+        >
+          <h3 className="text-lg font-bold text-slate-900">{t('groupDetail.expensesHeading')}</h3>
+        </div>
+
+        {currentActiveBatch && (
+          <div className="flex flex-col gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:flex-row sm:items-center sm:justify-between sm:border-slate-200/90 sm:bg-slate-50/70 sm:shadow-none">
+            <div>
+              <p className="text-xs font-bold uppercase tracking-wide text-slate-500">
+                {t('groupDetail.currentBatchHeading')}
+              </p>
+              <p className="mt-1 text-base font-semibold text-slate-900">{currentActiveBatch.title}</p>
+              <p className="mt-1 text-xs text-slate-600">
+                {formatMoney(currentActiveBatch.totalAmountCents)} · {currentActiveBatch.expenseCount}{' '}
+                {t('groupDetail.expensesCountLabel')}
+                {currentActiveBatch.createdAtMs > 0
+                  ? ` · ${formatDateOnly(new Date(currentActiveBatch.createdAtMs).toISOString(), locale)}`
+                  : ''}
+              </p>
             </div>
-          ) : allExpenses.length === 0 ? (
-            <div className="py-16 text-center">
-              <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-slate-100">
-                <Receipt className="h-7 w-7 text-slate-400" />
-              </div>
-              <h3 className="text-lg font-bold text-slate-900">{t('groupDetail.noExpenses')}</h3>
-              <p className="mx-auto mt-2 max-w-sm text-sm text-slate-500">{t('groupDetail.noExpensesDescription')}</p>
-              <Button className="mt-5" onClick={onOpenAddExpense} disabled={!canAddExpense} title={addExpenseDisabledHint}>
-                {t('groupDetail.addFirstExpense')}
+            {onOpenCloseBatchModal && isOwner && (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={onOpenCloseBatchModal}
+                loading={closingCurrentBatch}
+                disabled={closingCurrentBatch}
+                className="shrink-0"
+              >
+                {t('groupDetail.closeBatch')}
               </Button>
+            )}
+          </div>
+        )}
+
+        <div className="grid gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:border-slate-100 sm:bg-slate-50/50 sm:shadow-none sm:grid-cols-3">
+          <div>
+            <label className="mb-1 block text-[11px] font-bold uppercase tracking-wide text-slate-500">
+              {t('groupDetail.filterStatus')}
+            </label>
+            <select
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value as 'all' | 'draft' | 'confirmed')}
+              className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800"
+            >
+              <option value="all">{t('groupDetail.filterStatusAll')}</option>
+              <option value="draft">{t('groupDetail.filterStatusDraftOnly')}</option>
+              <option value="confirmed">{t('groupDetail.filterStatusConfirmedOnly')}</option>
+            </select>
+          </div>
+
+          <div>
+            <label className="mb-1 block text-[11px] font-bold uppercase tracking-wide text-slate-500">
+              {t('groupDetail.filterEvent')}
+            </label>
+            <select
+              value={filterEventId}
+              onChange={(e) => setFilterEventId(e.target.value)}
+              className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800"
+            >
+              <option value="all">{t('groupDetail.filterEventAll')}</option>
+              <option value="__none__">{t('groupDetail.filterEventNone')}</option>
+              {eventOptions.map(([eid, title]) => (
+                <option key={eid} value={eid}>
+                  {title}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label className="mb-1 block text-[11px] font-bold uppercase tracking-wide text-slate-500">
+              {historySubtab === 'group_expenses'
+                ? t('groupDetail.filterPayer')
+                : t('groupDetail.filterMember')}
+            </label>
+            <select
+              value={filterMemberId}
+              onChange={(e) => setFilterMemberId(e.target.value)}
+              className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800"
+            >
+              <option value="all">
+                {historySubtab === 'group_expenses'
+                  ? t('groupDetail.filterPayerAll')
+                  : t('groupDetail.filterMemberAll')}
+              </option>
+              {members.map((m) => (
+                <option key={m.user_id} value={m.user_id}>
+                  {memberLabel(m)}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+
+        {showDraftBlock && (
+          <div className="space-y-4">
+            <div className="flex flex-wrap items-center gap-2">
+              <h4 className="text-base font-bold text-amber-900">{t('groupDetail.draftSectionTitle')}</h4>
+              <span
+                className="inline-flex items-center gap-1 rounded-full border border-amber-200 bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-900"
+                title={t('groupDetail.draftTooltip')}
+              >
+                <Info className="h-3 w-3" />
+                {t('groupDetail.draftTooltip')}
+              </span>
             </div>
+
+            {groupedDraftSections.length === 0 ? (
+              <p className="rounded-2xl border border-amber-100 bg-amber-50/50 px-4 py-8 text-center text-sm text-amber-900/80">
+                {t('groupDetail.noDraftExpenses')}
+              </p>
+            ) : (
+              <>
+                <div className="space-y-6">
+                  {groupedDraftSections.map((section) =>
+                    renderSectionBlock(section, { prefix: 'draft', readOnlyDraft: true }),
+                  )}
+                </div>
+
+                {draftLimit < draftFlatSorted.length && (
+                  <div className="flex justify-center pt-2">
+                    <Button type="button" variant="outline" onClick={() => setDraftLimit((n) => n + PAGE_CHUNK)}>
+                      {t('groupDetail.loadMore')}
+                    </Button>
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        )}
+
+        {showConfirmedBlock && (
+          <div className="space-y-4">
+            <h4 className="text-base font-bold text-slate-900">{t('groupDetail.confirmedSectionTitle')}</h4>
+
+            {groupedConfirmedSections.length === 0 ? (
+              <p className="rounded-2xl border border-slate-200 bg-slate-50/70 px-4 py-8 text-center text-sm text-slate-500">
+                {t('groupDetail.noMatchingExpenses')}
+              </p>
+            ) : (
+              <>
+                <div className="space-y-6">
+                  {groupedConfirmedSections.map((section) =>
+                    renderSectionBlock(section, { prefix: 'confirmed', readOnlyDraft: false }),
+                  )}
+                </div>
+
+                {confirmedLimit < confirmedFlatSorted.length && (
+                  <div className="flex justify-center pt-2">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => setConfirmedLimit((n) => n + PAGE_CHUNK)}
+                    >
+                      {t('groupDetail.loadMore')}
+                    </Button>
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        )}
+
+        {!showDraftBlock && !showConfirmedBlock && activeBatchExpenses.length > 0 && (
+          <p className="py-10 text-center text-sm text-slate-500">{t('groupDetail.noMatchingExpenses')}</p>
+        )}
+      </div>
+    )}
+  </>
+)}
+
+{detailTab === 'history' && (
+  <>
+    {expensesLoading ? (
+      <div className="flex items-center justify-center py-16 text-slate-400">
+        <Loader2 className="mr-2 h-8 w-8 animate-spin" />
+      </div>
+    ) : historicalExpenses.length === 0 ? (
+      <div className="py-16 text-center">
+        <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-slate-100">
+          <Receipt className="h-7 w-7 text-slate-400" />
+        </div>
+        <h3 className="text-lg font-bold text-slate-900">{t('groupDetail.historyHeading')}</h3>
+        <p className="mx-auto mt-2 max-w-sm text-sm text-slate-500">
+          {t('groupDetail.noHistoryYet')}
+        </p>
+      </div>
+    ) : (
+      <div className="space-y-6">
+        <div className="flex flex-col gap-3 scroll-mt-24 sm:flex-row sm:items-end sm:justify-between">
+          <h3 className="text-lg font-bold text-slate-900">{t('groupDetail.historyHeading')}</h3>
+        </div>
+
+        <div className="inline-flex rounded-xl border border-slate-200 bg-slate-50 p-1">
+          <button
+            type="button"
+            onClick={() => setHistorySubtab('group_expenses')}
+            className={`rounded-lg px-3 py-1.5 text-sm font-semibold transition-colors ${
+              historySubtab === 'group_expenses'
+                ? 'bg-white text-blue-700 shadow-sm ring-1 ring-slate-200/80'
+                : 'text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            {t('groupDetail.historySubtabGroupExpenses')}
+          </button>
+          <button
+            type="button"
+            onClick={() => setHistorySubtab('events')}
+            className={`rounded-lg px-3 py-1.5 text-sm font-semibold transition-colors ${
+              historySubtab === 'events'
+                ? 'bg-white text-blue-700 shadow-sm ring-1 ring-slate-200/80'
+                : 'text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            {t('groupDetail.historySubtabEvents')}
+          </button>
+        </div>
+
+        {historySubtab === 'events' && (
+          <p className="text-sm text-slate-600">{t('groupDetail.historyEventsByCycleHint')}</p>
+        )}
+
+        <div className="grid gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:border-slate-100 sm:bg-slate-50/50 sm:shadow-none sm:grid-cols-2">
+          {historySubtab === 'events' && (
+            <div>
+              <label className="mb-1 block text-[11px] font-bold uppercase tracking-wide text-slate-500">
+                {t('groupDetail.filterEvent')}
+              </label>
+              <select
+                value={filterEventId}
+                onChange={(e) => setFilterEventId(e.target.value)}
+                className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800"
+              >
+                <option value="all">{t('groupDetail.filterEventAll')}</option>
+                <option value="__none__">{t('groupDetail.filterEventNone')}</option>
+                {eventOptions.map(([eid, title]) => (
+                  <option key={eid} value={eid}>
+                    {title}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          <div>
+            <label className="mb-1 block text-[11px] font-bold uppercase tracking-wide text-slate-500">
+              {t('groupDetail.filterMember')}
+            </label>
+            <select
+              value={filterMemberId}
+              onChange={(e) => setFilterMemberId(e.target.value)}
+              className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800"
+            >
+              <option value="all">{t('groupDetail.filterMemberAll')}</option>
+              {members.map((m) => (
+                <option key={m.user_id} value={m.user_id}>
+                  {memberLabel(m)}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+
+        {historySubtab === 'group_expenses' ? (
+          groupedHistoricalGroupBatches.length === 0 ? (
+            <p className="rounded-2xl border border-slate-200 bg-slate-50/70 px-4 py-8 text-center text-sm text-slate-500">
+              {t('groupDetail.noGroupExpenseHistoryYet')}
+            </p>
           ) : (
             <div className="space-y-6">
-              <div id="group-expenses" className="flex flex-col gap-3 scroll-mt-24 sm:flex-row sm:items-end sm:justify-between">
-                <h3 className="text-lg font-bold text-slate-900">{t('groupDetail.expensesHeading')}</h3>
-              </div>
-
-              <div className="grid gap-3 rounded-2xl border border-slate-100 bg-slate-50/50 p-4 sm:grid-cols-3">
-                <div>
-                  <label className="mb-1 block text-[11px] font-bold uppercase tracking-wide text-slate-500">{t('groupDetail.filterStatus')}</label>
-                  <select
-                    value={statusFilter}
-                    onChange={(e) => setStatusFilter(e.target.value as 'all' | 'draft' | 'confirmed')}
-                    className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800"
-                  >
-                    <option value="all">{t('groupDetail.filterStatusAll')}</option>
-                    <option value="draft">{t('groupDetail.filterStatusDraftOnly')}</option>
-                    <option value="confirmed">{t('groupDetail.filterStatusConfirmedOnly')}</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="mb-1 block text-[11px] font-bold uppercase tracking-wide text-slate-500">{t('groupDetail.filterEvent')}</label>
-                  <select
-                    value={filterEventId}
-                    onChange={(e) => setFilterEventId(e.target.value)}
-                    className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800"
-                  >
-                    <option value="all">{t('groupDetail.filterEventAll')}</option>
-                    <option value="__none__">{t('groupDetail.filterEventNone')}</option>
-                    {eventOptions.map(([eid, title]) => (
-                      <option key={eid} value={eid}>
-                        {title}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <label className="mb-1 block text-[11px] font-bold uppercase tracking-wide text-slate-500">{t('groupDetail.filterMember')}</label>
-                  <select
-                    value={filterMemberId}
-                    onChange={(e) => setFilterMemberId(e.target.value)}
-                    className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800"
-                  >
-                    <option value="all">{t('groupDetail.filterMemberAll')}</option>
-                    {members.map((m) => (
-                      <option key={m.user_id} value={m.user_id}>
-                        {memberLabel(m)}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-
-              {showDraftBlock && (
-                <div className="space-y-4">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <h4 className="text-base font-bold text-amber-900">{t('groupDetail.draftSectionTitle')}</h4>
-                    <span
-                      className="inline-flex items-center gap-1 rounded-full border border-amber-200 bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-900"
-                      title={t('groupDetail.draftTooltip')}
-                    >
-                      <Info className="h-3 w-3" />
-                      {t('groupDetail.draftTooltip')}
-                    </span>
-                  </div>
-                  {groupedDraftSections.length === 0 ? (
-                    <p className="rounded-2xl border border-amber-100 bg-amber-50/50 px-4 py-8 text-center text-sm text-amber-900/80">
-                      {t('groupDetail.noDraftExpenses')}
-                    </p>
-                  ) : (
-                    <>
-                      <div className="space-y-6">{groupedDraftSections.map((s) => renderSectionBlock(s, { prefix: 'draft', readOnlyDraft: true }))}</div>
-                      {draftLimit < draftFlatSorted.length && (
-                        <div className="flex justify-center pt-2">
-                          <Button type="button" variant="outline" onClick={() => setDraftLimit((n) => n + PAGE_CHUNK)}>
-                            {t('groupDetail.loadMore')}
-                          </Button>
-                        </div>
-                      )}
-                    </>
-                  )}
-                </div>
-              )}
-
-              {showConfirmedBlock && (
-                <div className="space-y-4">
-                  <h4 className="text-base font-bold text-slate-900">{t('groupDetail.confirmedSectionTitle')}</h4>
-                  <div className="space-y-6">
-                    {groupedConfirmedSections.map((s) => renderSectionBlock(s, { prefix: 'confirmed', readOnlyDraft: false }))}
-                  </div>
-                  {confirmedLimit < confirmedFlatSorted.length && (
-                    <div className="flex justify-center pt-2">
-                      <Button type="button" variant="outline" onClick={() => setConfirmedLimit((n) => n + PAGE_CHUNK)}>
-                        {t('groupDetail.loadMore')}
-                      </Button>
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {!showDraftBlock && !showConfirmedBlock && allExpenses.length > 0 && (
-                <p className="py-10 text-center text-sm text-slate-500">{t('groupDetail.noMatchingExpenses')}</p>
+              {groupedHistoricalGroupBatches.map((batch) =>
+                renderBatchBlock(batch, { prefix: 'history-group', readOnlyDraft: false }),
               )}
             </div>
-          )}
-            </>
-          )}
+          )
+        ) : groupedHistoricalEventBatches.length === 0 ? (
+          <p className="rounded-2xl border border-slate-200 bg-slate-50/70 px-4 py-8 text-center text-sm text-slate-500">
+            {t('groupDetail.noEventHistoryYet')}
+          </p>
+        ) : (
+          <div className="space-y-6">
+            {groupedHistoricalEventBatches.map(({ batch, eventSections }) =>
+              renderHistoricalEventBatchGroup(batch, eventSections, {
+                prefix: 'history-events',
+                readOnlyDraft: false,
+              }),
+            )}
+          </div>
+        )}
+      </div>
+    )}
+  </>
+)}
 
           {detailTab === 'members' && (
             <section className="mb-8 space-y-4">
@@ -1286,9 +1866,9 @@ const [selectedSettleRow, setSelectedSettleRow] = useState<{
                     } else if (net === undefined || net === 0) {
                       statusLabel = t('groupDetail.memberBalanceEven');
                     } else if (net > 0) {
-                      statusLabel = t('groupDetail.memberYouOweThem', { amount: formatMoney(net) });
-                    } else {
                       statusLabel = t('groupDetail.memberTheyOweYou', { amount: formatMoney(Math.abs(net)) });
+                    } else {
+                      statusLabel = t('groupDetail.memberYouOweThem', { amount: formatMoney(Math.abs(net)) });
                     }
                     return (
                       <li

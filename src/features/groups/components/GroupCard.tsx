@@ -2,7 +2,7 @@ import React from 'react';
 import { useTranslation } from 'react-i18next';
 import { Users, ChevronRight } from 'lucide-react';
 import { motion } from 'motion/react';
-import { Group } from '../../../types';
+import type { Group } from '../../../dbAliases';
 import { formatCurrencyCents } from '../../../lib/dateTime';
 
 interface GroupCardProps {
@@ -10,8 +10,8 @@ interface GroupCardProps {
   group: Group;
   onClick: (group: Group) => void;
   variant?: 'compact' | 'full';
-  /** Sum of accounting-eligible (open/confirmed) expenses for this group, in cents. */
-  totalOpenExpensesCents?: number;
+  /** Sum of expense amounts in the group's current open cycle (cents). */
+  activeCycleExpensesTotalCents?: number;
   /** While totals are loading, show a placeholder instead of €0. */
   totalsLoading?: boolean;
 }
@@ -20,14 +20,14 @@ export function GroupCard({
   group,
   onClick,
   variant = 'full',
-  totalOpenExpensesCents = 0,
+  activeCycleExpensesTotalCents = 0,
   totalsLoading = false,
 }: GroupCardProps) {
   const { t, i18n } = useTranslation();
   const sampleCompactAmount = formatCurrencyCents(4250, { locale: i18n.language });
   const listAmount = totalsLoading
     ? '…'
-    : formatCurrencyCents(totalOpenExpensesCents, { locale: i18n.language });
+    : formatCurrencyCents(activeCycleExpensesTotalCents, { locale: i18n.language });
 
   if (variant === 'compact') {
     return (
@@ -75,7 +75,12 @@ export function GroupCard({
         </div>
       </div>
       <div className="flex items-center gap-3">
-        <span className="text-sm font-bold text-green-600 tabular-nums">{listAmount}</span>
+        <span
+          className="text-sm font-bold tabular-nums text-slate-800"
+          title={t('groupCard.listActiveCycleTotalHint')}
+        >
+          {listAmount}
+        </span>
         <ChevronRight className="w-4 h-4 text-slate-300 group-hover:text-blue-500 transition-colors" />
       </div>
     </motion.div>

@@ -4,7 +4,7 @@ import { AlertCircle } from 'lucide-react';
 import { Modal } from '../../../components/ui/Modal';
 import { Input } from '../../../components/ui/Input';
 import { Button } from '../../../components/ui/Button';
-import { Group } from '../../../types';
+import type { Group } from '../../../dbAliases';
 
 type Phase = 'edit' | 'confirm-save' | 'confirm-delete';
 

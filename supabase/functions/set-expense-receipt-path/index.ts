@@ -66,7 +66,13 @@ serve(async (req) => {
       return json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const body = await req.json() as { expense_id?: string; receipt_path?: string | null };
+    const body = await req.json() as {
+      expense_id?: string;
+      receipt_path?: string | null;
+      receipt_filename?: string | null;
+      receipt_mime_type?: string | null;
+      receipt_size_bytes?: number | null;
+    };
 
     const expenseId = body.expense_id as string;
     const hasReceiptPath = Object.prototype.hasOwnProperty.call(body, 'receipt_path');
@@ -126,11 +132,30 @@ serve(async (req) => {
 
     const nextPath = receiptPath === '' ? null : receiptPath;
 
+    const patch: Record<string, string | number | null> = { receipt_path: nextPath };
+    if (nextPath === null) {
+      patch.receipt_filename = null;
+      patch.receipt_mime_type = null;
+      patch.receipt_size_bytes = null;
+    } else {
+      if (Object.prototype.hasOwnProperty.call(body, 'receipt_filename')) {
+        patch.receipt_filename = (body.receipt_filename as string | null) ?? null;
+      }
+      if (Object.prototype.hasOwnProperty.call(body, 'receipt_mime_type')) {
+        patch.receipt_mime_type = (body.receipt_mime_type as string | null) ?? null;
+      }
+      if (Object.prototype.hasOwnProperty.call(body, 'receipt_size_bytes')) {
+        const n = body.receipt_size_bytes;
+        patch.receipt_size_bytes =
+          typeof n === 'number' && Number.isFinite(n) ? n : null;
+      }
+    }
+
     const { data: updated, error: updateError } = await adminClient
       .from('expenses')
-      .update({ receipt_path: nextPath })
+      .update(patch)
       .eq('id', expenseId)
-      .select('id, receipt_path')
+      .select('id, receipt_path, receipt_filename, receipt_mime_type, receipt_size_bytes')
       .single();
 
     if (updateError || !updated) {

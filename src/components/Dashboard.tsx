@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Session } from '@supabase/supabase-js';
 import { supabase } from '../lib/supabase';
-import { Group } from '../types';
+import type { Group } from '../dbAliases';
 import { 
   Plus, 
   Users, 
@@ -30,6 +30,7 @@ export function Dashboard({ session }: DashboardProps) {
   const [loading, setLoading] = useState(true);
   const [newGroupName, setNewGroupName] = useState('');
   const [newGroupDesc, setNewGroupDesc] = useState('');
+  const [newGroupCycleTitle, setNewGroupCycleTitle] = useState('');
   const [actionLoading, setActionLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
@@ -91,8 +92,13 @@ export function Dashboard({ session }: DashboardProps) {
     setSuccess(false);
 
     try {
+      const cycleTrim = newGroupCycleTitle.trim();
       const { data, error: funcError } = await supabase.functions.invoke('create-group', {
-        body: { name: newGroupName, description: newGroupDesc },
+        body: {
+          name: newGroupName,
+          description: newGroupDesc,
+          ...(cycleTrim ? { initial_cycle_title: cycleTrim } : {}),
+        },
         headers: {
           Authorization: `Bearer ${session.access_token}`
         }
@@ -103,6 +109,7 @@ export function Dashboard({ session }: DashboardProps) {
       await fetchGroups();
       setNewGroupName('');
       setNewGroupDesc('');
+      setNewGroupCycleTitle('');
       setSuccessMessage(t('createGroup.createSuccess'));
       setSuccess(true);
       setShowCreateForm(false);
@@ -220,6 +227,19 @@ export function Dashboard({ session }: DashboardProps) {
                               placeholder={t('createGroup.descriptionPlaceholder')}
                             />
                           </div>
+                        </div>
+                        <div>
+                          <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1 ml-1">
+                            {t('createGroup.initialCycleTitleLabel')}
+                          </label>
+                          <input
+                            type="text"
+                            value={newGroupCycleTitle}
+                            onChange={(e) => setNewGroupCycleTitle(e.target.value)}
+                            className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-all text-sm"
+                            placeholder={t('createGroup.initialCycleTitlePlaceholder')}
+                          />
+                          <p className="mt-1 ml-1 text-xs text-slate-500">{t('createGroup.initialCycleTitleHint')}</p>
                         </div>
 
                         {error && (

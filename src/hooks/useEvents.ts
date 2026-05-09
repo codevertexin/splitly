@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { Session } from '@supabase/supabase-js';
 import { supabase } from '../lib/supabase';
-import { Event, EventParticipant, Expense, Profile } from '../types';
+import type { Event, EventParticipant, Expense, Profile } from '../dbAliases';
 
 type GroupMemberWithProfile = {
   id: string;

@@ -40,6 +40,15 @@ export function formatCurrencyCents(
   }).format(cents / 100);
 }
 
+/** Alias semântico para relatórios / UI (valor em cêntimos + moeda explícita). */
+export function formatMoneyFromCents(
+  cents: number,
+  currency: string,
+  options?: { locale?: string },
+) {
+  return formatCurrencyCents(cents, { locale: options?.locale, currency });
+}
+
 export function formatDecimal(value: number, options?: { locale?: string; digits?: number }) {
   const { locale, digits = 2 } = options || {};
   return new Intl.NumberFormat(normalizeLocale(locale), {
@@ -56,4 +65,21 @@ export function formatCentsAsDecimal(cents: number, options?: { locale?: string;
 export function formatFixedInput(value: number, digits = 2) {
   if (!Number.isFinite(value)) return (0).toFixed(digits);
   return value.toFixed(digits);
+}
+
+export function formatFileSize(bytes: number | null | undefined, locale?: string): string {
+  if (bytes == null || !Number.isFinite(bytes) || bytes < 0) return '—';
+  const loc = normalizeLocale(locale);
+  const units = ['B', 'KB', 'MB', 'GB'];
+  let v = bytes;
+  let u = 0;
+  while (v >= 1024 && u < units.length - 1) {
+    v /= 1024;
+    u += 1;
+  }
+  const formatted =
+    u === 0
+      ? String(Math.round(v))
+      : new Intl.NumberFormat(loc, { maximumFractionDigits: 1 }).format(v);
+  return `${formatted} ${units[u]}`;
 }

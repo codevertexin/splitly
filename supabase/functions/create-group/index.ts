@@ -5,6 +5,8 @@ type CreateGroupBody = {
   name: string;
   description?: string | null;
   base_currency?: string;
+  /** Título do primeiro ciclo de despesas (batch ativo). Opcional: default "Cycle 1". */
+  initial_cycle_title?: string | null;
 };
 
 const corsHeaders = {
@@ -71,6 +73,8 @@ serve(async (req) => {
     const name = body.name?.trim();
     const description = body.description?.trim() || null;
     const baseCurrency = body.base_currency?.trim() || "EUR";
+    const initialCycleTitle =
+      body.initial_cycle_title?.trim() || "Cycle 1";
 
     if (!name || name.length < 2) {
       return jsonResponse({ error: "Group name must have at least 2 characters" }, 400);
@@ -115,7 +119,27 @@ serve(async (req) => {
       );
     }
 
-    // 3) Audit event
+    // 3) Primeiro ciclo (batch ativo) — um por grupo
+    const { error: batchError } = await adminClient.from("expense_batches").insert({
+      group_id: group.id,
+      title: initialCycleTitle,
+      description: null,
+      is_active: true,
+      closed_at: null,
+      created_by: user.id,
+    });
+
+    if (batchError) {
+      return jsonResponse(
+        {
+          error: "Group created but failed to create initial expense batch",
+          details: batchError.message,
+        },
+        400,
+      );
+    }
+
+    // 4) Audit event
     const { error: auditError } = await adminClient
       .from("audit_events")
       .insert({

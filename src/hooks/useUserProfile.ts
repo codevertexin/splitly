@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
-import type { Profile } from '../types';
+import type { Profile } from '../dbAliases';
 import type { SupportedLocale } from '../i18n';
 import { isSupportedLocale, setAppLanguage } from '../i18n';
 

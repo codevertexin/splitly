@@ -168,6 +168,50 @@ export type Database = {
           },
         ]
       }
+      expense_batches: {
+        Row: {
+          closed_at: string | null
+          created_at: string
+          created_by: string | null
+          description: string | null
+          group_id: string
+          id: string
+          is_active: boolean
+          title: string
+          updated_at: string
+        }
+        Insert: {
+          closed_at?: string | null
+          created_at?: string
+          created_by?: string | null
+          description?: string | null
+          group_id: string
+          id?: string
+          is_active?: boolean
+          title: string
+          updated_at?: string
+        }
+        Update: {
+          closed_at?: string | null
+          created_at?: string
+          created_by?: string | null
+          description?: string | null
+          group_id?: string
+          id?: string
+          is_active?: boolean
+          title?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "expense_batches_group_id_fkey"
+            columns: ["group_id"]
+            isOneToOne: false
+            referencedRelation: "groups"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       expense_splits: {
         Row: {
           created_at: string
@@ -222,6 +266,7 @@ export type Database = {
           affects_balances: boolean
           amount_cents: number
           balance_impact_summary: Json
+          batch_id: string
           calculation_trace: Json
           created_at: string
           created_by: string
@@ -234,7 +279,10 @@ export type Database = {
           id: string
           incurred_at: string
           paid_by_user_id: string
+          receipt_filename: string | null
+          receipt_mime_type: string | null
           receipt_path: string | null
+          receipt_size_bytes: number | null
           requested_split_method: string | null
           split_method: Database["public"]["Enums"]["split_method"]
           status: Database["public"]["Enums"]["expense_status"]
@@ -245,6 +293,7 @@ export type Database = {
           affects_balances?: boolean
           amount_cents: number
           balance_impact_summary?: Json
+          batch_id: string
           calculation_trace?: Json
           created_at?: string
           created_by: string
@@ -257,7 +306,10 @@ export type Database = {
           id?: string
           incurred_at?: string
           paid_by_user_id: string
+          receipt_filename?: string | null
+          receipt_mime_type?: string | null
           receipt_path?: string | null
+          receipt_size_bytes?: number | null
           requested_split_method?: string | null
           split_method?: Database["public"]["Enums"]["split_method"]
           status?: Database["public"]["Enums"]["expense_status"]
@@ -268,6 +320,7 @@ export type Database = {
           affects_balances?: boolean
           amount_cents?: number
           balance_impact_summary?: Json
+          batch_id?: string
           calculation_trace?: Json
           created_at?: string
           created_by?: string
@@ -280,7 +333,10 @@ export type Database = {
           id?: string
           incurred_at?: string
           paid_by_user_id?: string
+          receipt_filename?: string | null
+          receipt_mime_type?: string | null
           receipt_path?: string | null
+          receipt_size_bytes?: number | null
           requested_split_method?: string | null
           split_method?: Database["public"]["Enums"]["split_method"]
           status?: Database["public"]["Enums"]["expense_status"]
@@ -288,6 +344,13 @@ export type Database = {
           updated_at?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "expenses_batch_id_fkey"
+            columns: ["batch_id"]
+            isOneToOne: false
+            referencedRelation: "expense_batches"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "expenses_created_by_fkey"
             columns: ["created_by"]
@@ -312,6 +375,44 @@ export type Database = {
           {
             foreignKeyName: "expenses_paid_by_user_id_fkey"
             columns: ["paid_by_user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      feature_interest: {
+        Row: {
+          created_at: string
+          email: string | null
+          feature_key: string
+          id: string
+          message: string | null
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          email?: string | null
+          feature_key: string
+          id?: string
+          message?: string | null
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          email?: string | null
+          feature_key?: string
+          id?: string
+          message?: string | null
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "feature_interest_user_id_fkey"
+            columns: ["user_id"]
             isOneToOne: false
             referencedRelation: "profiles"
             referencedColumns: ["id"]
@@ -784,6 +885,46 @@ export type Database = {
         Args: { p_profile_id: string }
         Returns: boolean
       }
+      close_current_batch_and_open_new: {
+        Args: { p_created_by?: string; p_group_id: string; p_new_title: string }
+        Returns: {
+          closed_at: string | null
+          created_at: string
+          created_by: string | null
+          description: string | null
+          group_id: string
+          id: string
+          is_active: boolean
+          title: string
+          updated_at: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "expense_batches"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
+      get_or_create_active_expense_batch: {
+        Args: { p_created_by?: string; p_group_id: string }
+        Returns: {
+          closed_at: string | null
+          created_at: string
+          created_by: string | null
+          description: string | null
+          group_id: string
+          id: string
+          is_active: boolean
+          title: string
+          updated_at: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "expense_batches"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
       is_group_member: { Args: { p_group_id: string }; Returns: boolean }
       is_group_member_safe: { Args: { p_group_id: string }; Returns: boolean }
       is_group_owner: { Args: { p_group_id: string }; Returns: boolean }
@@ -941,11 +1082,3 @@ export const Constants = {
     },
   },
 } as const
-
-/** Aliases for common `Tables<'…'>` row types used across the app. */
-export type Group = Tables<'groups'>
-export type Expense = Tables<'expenses'>
-export type Event = Tables<'events'>
-export type Profile = Tables<'profiles'>
-export type EventParticipant = Tables<'event_participants'>
-export type UserContact = Tables<'user_contacts'>

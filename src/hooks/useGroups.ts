@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { Session } from '@supabase/supabase-js';
 import { supabase } from '../lib/supabase';
-import { Group } from '../types';
+import type { Group } from '../dbAliases';
 
 export function useGroups(session: Session) {
   const [groups, setGroups] = useState<Group[]>([]);
@@ -18,13 +18,28 @@ export function useGroups(session: Session) {
     setLoading(true)
     setError(null)
 
+    const { data: membershipRows, error: membershipError } = await supabase
+      .from('group_members')
+      .select('group_id')
+      .eq('user_id', session.user.id)
+      .eq('status', 'active');
+
+    if (membershipError) throw membershipError;
+
+    const groupIds = (membershipRows || []).map((row) => row.group_id);
+    if (groupIds.length === 0) {
+      setGroups([]);
+      return;
+    }
+
     const { data, error } = await supabase
       .from('groups')
       .select('*')
-      .order('created_at', { ascending: false })
+      .in('id', groupIds)
+      .order('created_at', { ascending: false });
 
-    if (error) throw error
-    setGroups(data || [])
+    if (error) throw error;
+    setGroups(data || []);
   } catch (err: any) {
     console.error('Error fetching groups:', err.message)
     setError(err.message)
@@ -34,13 +49,18 @@ export function useGroups(session: Session) {
   }
 }
 
-  const createGroup = async (name: string, description: string) => {
+  const createGroup = async (name: string, description: string, initialCycleTitle?: string) => {
     setActionLoading(true);
     setError(null);
 
     try {
+      const trimmedCycle = initialCycleTitle?.trim();
       const { data, error: funcError } = await supabase.functions.invoke('create-group', {
-        body: { name, description },
+        body: {
+          name,
+          description,
+          ...(trimmedCycle ? { initial_cycle_title: trimmedCycle } : {}),
+        },
         headers: {
           Authorization: `Bearer ${session.access_token}`
         }

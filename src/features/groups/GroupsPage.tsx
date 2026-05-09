@@ -5,7 +5,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { Session } from '@supabase/supabase-js';
 import { useNavigate } from 'react-router-dom';
 import { useGroups } from '../../hooks/useGroups';
-import { useGroupAccountingTotals } from '../../hooks/useGroupAccountingTotals';
+import { useMyGroupActiveCycleExpenseTotals } from '../../hooks/useMyGroupActiveCycleExpenseTotals';
 import { GroupCard } from './components/GroupCard';
 import { CreateGroupForm } from './components/CreateGroupForm';
 import { Button } from '../../components/ui/Button';
@@ -23,7 +23,10 @@ export function GroupsPage({ session }: GroupsPageProps) {
   const navigate = useNavigate();
   const { groups, loading, error, actionLoading, createGroup } = useGroups(session);
   const groupIds = useMemo(() => groups.map((g) => g.id), [groups]);
-  const { totalsByGroupId, loading: totalsLoading } = useGroupAccountingTotals(session, groupIds);
+  const { activeCycleExpenseTotalByGroupId, loading: cycleTotalsLoading } = useMyGroupActiveCycleExpenseTotals(
+    session,
+    groupIds,
+  );
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [statusFilter, setStatusFilter] = useState<'active' | 'archived' | 'all'>('active');
 
@@ -42,8 +45,8 @@ export function GroupsPage({ session }: GroupsPageProps) {
     void trackProductEvent('first_group_started', { once_key: 'first_group_started' });
   }, [showCreateForm]);
 
-  const handleCreateGroup = async (name: string, description: string) => {
-    const result = await createGroup(name, description);
+  const handleCreateGroup = async (name: string, description: string, initialCycleTitle?: string) => {
+    const result = await createGroup(name, description, initialCycleTitle);
     if (result.success) {
       // Funnel: user completed first key value step (first group created).
       void trackProductEvent('first_group_created', { once_key: 'first_group_created', entity_type: 'group', entity_id: result.groupId ?? null });
@@ -161,8 +164,8 @@ export function GroupsPage({ session }: GroupsPageProps) {
                       key={group.id}
                       group={group}
                       onClick={(g) => navigate(`/groups/${g.id}`)}
-                      totalOpenExpensesCents={totalsByGroupId[group.id] ?? 0}
-                      totalsLoading={totalsLoading}
+                      activeCycleExpensesTotalCents={activeCycleExpenseTotalByGroupId[group.id] ?? 0}
+                      totalsLoading={cycleTotalsLoading}
                     />
                   ))}
                 </div>

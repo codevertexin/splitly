@@ -56,7 +56,9 @@ export function HelpPage() {
                   {t(`help.questions.${item.id}.question`)}
                 </summary>
                 <p className="pt-3 text-sm leading-relaxed text-slate-700 sm:text-base">
-                  {t(`help.questions.${item.id}.answer`)}
+                  {item.id === 'expenses'
+                    ? t('accounting.whatCountsTowardBalances')
+                    : t(`help.questions.${item.id}.answer`)}
                 </p>
                 {(i18n.exists(`help.questions.${item.id}.point1`) || i18n.exists(`help.questions.${item.id}.point2`)) && (
                   <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-slate-700">

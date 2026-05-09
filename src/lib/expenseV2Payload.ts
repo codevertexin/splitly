@@ -14,6 +14,10 @@ type BuildExpenseV2PayloadInput = {
   manualShares?: Array<{ userId: string; amountCents: number }>;
   percentageShares?: Array<{ userId: string; percentage: number }>;
   affectsBalancesIntent?: boolean | null;
+  receiptPath?: string | null;
+  receiptFilename?: string | null;
+  receiptMimeType?: string | null;
+  receiptSizeBytes?: number | null;
 };
 
 export function buildExpenseV2Payload(input: BuildExpenseV2PayloadInput) {
@@ -31,6 +35,10 @@ export function buildExpenseV2Payload(input: BuildExpenseV2PayloadInput) {
     manual_shares: input.manualShares ?? [],
     percentage_shares: input.percentageShares ?? [],
     affects_balances_intent: input.affectsBalancesIntent ?? null,
+    receipt_path: input.receiptPath ?? null,
+    receipt_filename: input.receiptFilename ?? null,
+    receipt_mime_type: input.receiptMimeType ?? null,
+    receipt_size_bytes: input.receiptSizeBytes ?? null,
   };
 }
 
@@ -53,6 +61,10 @@ export type CreateExpenseV2PayloadInput = {
   splits?: ExpenseSplitInput[];
   status?: 'draft' | 'confirmed';
   affectsBalancesIntent?: boolean | null;
+  receiptPath?: string | null;
+  receiptFilename?: string | null;
+  receiptMimeType?: string | null;
+  receiptSizeBytes?: number | null;
 };
 
 export type CreateExpenseV2Payload = {
@@ -69,6 +81,10 @@ export type CreateExpenseV2Payload = {
   manual_shares: Array<{ userId: string; amountCents: number }>;
   percentage_shares: Array<{ userId: string; percentage: number }>;
   affects_balances_intent?: boolean | null;
+  receipt_path?: string | null;
+  receipt_filename?: string | null;
+  receipt_mime_type?: string | null;
+  receipt_size_bytes?: number | null;
 };
 
 function normalizeDescription(title: string, description?: string | null): string {
@@ -110,6 +126,18 @@ export function buildCreateExpenseV2Payload(
 
   if (input.affectsBalancesIntent !== undefined) {
     payload.affects_balances_intent = input.affectsBalancesIntent;
+  }
+  if (input.receiptPath !== undefined) {
+    payload.receipt_path = input.receiptPath;
+  }
+  if (input.receiptFilename !== undefined) {
+    payload.receipt_filename = input.receiptFilename;
+  }
+  if (input.receiptMimeType !== undefined) {
+    payload.receipt_mime_type = input.receiptMimeType;
+  }
+  if (input.receiptSizeBytes !== undefined) {
+    payload.receipt_size_bytes = input.receiptSizeBytes;
   }
 
   return payload;

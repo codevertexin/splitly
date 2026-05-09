@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { Camera, ImagePlus, Sparkles, X } from 'lucide-react';
 import { Button } from '../../../components/ui/Button';
 import { Badge } from '../../../components/ui/Badge';
+import { SCAN_RECEIPT_FEATURE_KEY, useFeatureInterestRegistered } from '../../billing';
 
 export type ExpenseReceiptSectionProps = {
   /** Hidden file input used for camera/gallery attachment only. */
@@ -22,6 +23,8 @@ export type ExpenseReceiptSectionProps = {
   disableOcr?: boolean;
   /** When set, applies to both photo and OCR (overrides disablePhoto/disableOcr if those are omitted). */
   disabled?: boolean;
+  /** Current user id: when set, hides the scan-receipt / waitlist promo if already registered. */
+  scanReceiptInterestUserId?: string | null;
 };
 
 /**
@@ -38,10 +41,15 @@ export function ExpenseReceiptSection({
   disablePhoto,
   disableOcr,
   disabled = false,
+  scanReceiptInterestUserId = null,
 }: ExpenseReceiptSectionProps) {
   const { t } = useTranslation();
   const photoOff = disablePhoto ?? disabled;
   const ocrOff = disableOcr ?? disabled;
+  const scanReceiptAlreadyInterested = useFeatureInterestRegistered(
+    scanReceiptInterestUserId,
+    SCAN_RECEIPT_FEATURE_KEY,
+  );
 
   const displayImageUrl = receiptPreviewUrl ?? storedReceiptPreviewUrl ?? null;
   const receiptLabel =
@@ -126,30 +134,32 @@ export function ExpenseReceiptSection({
         )}
       </div>
 
-      <div className="border-t border-slate-200/80 pt-4 space-y-2">
-        {/* B — Future: OCR */}
-        <div className="flex flex-wrap items-center gap-2">
-          <Sparkles className="h-4 w-4 text-violet-600 shrink-0" aria-hidden />
-          <span className="text-sm font-semibold text-slate-800">{t('expenseForm.receiptOcrTitle')}</span>
-          <Badge variant="blue" size="sm">
-            {t('expenseForm.receiptBadgePro')}
-          </Badge>
-          <Badge variant="yellow" size="sm">
-            {t('expenseForm.receiptBadgeComingSoon')}
-          </Badge>
+      {!scanReceiptAlreadyInterested && (
+        <div className="border-t border-slate-200/80 pt-4 space-y-2">
+          {/* B — Future: OCR */}
+          <div className="flex flex-wrap items-center gap-2">
+            <Sparkles className="h-4 w-4 text-violet-600 shrink-0" aria-hidden />
+            <span className="text-sm font-semibold text-slate-800">{t('expenseForm.receiptOcrTitle')}</span>
+            <Badge variant="blue" size="sm">
+              {t('expenseForm.receiptBadgePro')}
+            </Badge>
+            <Badge variant="yellow" size="sm">
+              {t('expenseForm.receiptBadgeComingSoon')}
+            </Badge>
+          </div>
+          <p className="text-xs text-slate-500 leading-relaxed">{t('expenseForm.receiptOcrHint')}</p>
+          <Button
+            type="button"
+            variant="outline"
+            className="w-full border-violet-200 bg-white text-violet-900 hover:bg-violet-50 sm:w-auto"
+            onClick={onOcrInterestClick}
+            disabled={ocrOff}
+          >
+            <Sparkles className="mr-2 h-4 w-4 shrink-0" aria-hidden />
+            {t('expenseForm.receiptOcrCta')}
+          </Button>
         </div>
-        <p className="text-xs text-slate-500 leading-relaxed">{t('expenseForm.receiptOcrHint')}</p>
-        <Button
-          type="button"
-          variant="outline"
-          className="w-full border-violet-200 bg-white text-violet-900 hover:bg-violet-50 sm:w-auto"
-          onClick={onOcrInterestClick}
-          disabled={ocrOff}
-        >
-          <Sparkles className="mr-2 h-4 w-4 shrink-0" aria-hidden />
-          {t('expenseForm.receiptOcrCta')}
-        </Button>
-      </div>
+      )}
     </div>
   );
 }

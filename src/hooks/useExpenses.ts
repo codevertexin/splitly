@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { Session } from '@supabase/supabase-js';
 import { supabase } from '../lib/supabase';
 import { EXPENSES_CHANGED_EVENT, notifyExpensesChanged } from '../lib/expenseEvents';
-import { Expense } from '../types';
+import type { Expense } from '../dbAliases';
 
 export type ExpenseListRow = Expense & {
   profiles?: { full_name: string | null; avatar_url: string | null } | null;
@@ -33,7 +33,8 @@ export function useExpenses(session: Session) {
       const { data: memberData, error: memberError } = await supabase
         .from('group_members')
         .select('group_id')
-        .eq('user_id', session.user.id);
+        .eq('user_id', session.user.id)
+        .eq('status', 'active');
 
       if (memberError) throw memberError;
 
@@ -43,6 +44,7 @@ export function useExpenses(session: Session) {
           .from('expenses')
           .select('*, profiles!expenses_paid_by_user_id_fkey(*), event:events(id, title, status), splits:expense_splits(user_id, share_cents, percentage)')
           .in('group_id', groupIds)
+          .is('deleted_at', null)
           .order('incurred_at', { ascending: false });
 
         if (expensesError) throw expensesError;
@@ -93,6 +95,9 @@ export function useExpenses(session: Session) {
       splits?: Array<{ user_id: string; share_cents?: number; percentage?: number }>;
       status: 'draft' | 'confirmed';
       receipt_path?: string | null;
+      receipt_filename?: string | null;
+      receipt_mime_type?: string | null;
+      receipt_size_bytes?: number | null;
     }
   ) => {
     setActionLoading(true);
@@ -109,6 +114,15 @@ export function useExpenses(session: Session) {
       };
       if (Object.prototype.hasOwnProperty.call(input, 'receipt_path')) {
         body.receipt_path = input.receipt_path ?? null;
+      }
+      if (Object.prototype.hasOwnProperty.call(input, 'receipt_filename')) {
+        body.receipt_filename = input.receipt_filename ?? null;
+      }
+      if (Object.prototype.hasOwnProperty.call(input, 'receipt_mime_type')) {
+        body.receipt_mime_type = input.receipt_mime_type ?? null;
+      }
+      if (Object.prototype.hasOwnProperty.call(input, 'receipt_size_bytes')) {
+        body.receipt_size_bytes = input.receipt_size_bytes ?? null;
       }
       const { data, error: fnError } = await supabase.functions.invoke('update-expense-v2', {
         body,

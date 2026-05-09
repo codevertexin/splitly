@@ -70,7 +70,11 @@ export async function persistReceiptAfterExpenseCreate(params: {
   const path = buildExpenseReceiptObjectPath(params.groupId, params.expenseId, params.file);
   const up = await uploadExpenseReceiptObject(params.supabase, path, params.file);
   if (up.error) return { error: up.error };
-  return setExpenseReceiptPathOnServer(params.supabase, params.accessToken, params.expenseId, path);
+  return setExpenseReceiptPathOnServer(params.supabase, params.accessToken, params.expenseId, path, {
+    receiptFilename: params.file.name,
+    receiptMimeType: params.file.type || null,
+    receiptSizeBytes: params.file.size,
+  });
 }
 
 export async function setExpenseReceiptPathOnServer(
@@ -78,9 +82,20 @@ export async function setExpenseReceiptPathOnServer(
   accessToken: string,
   expenseId: string,
   receiptPath: string | null,
+  meta?: {
+    receiptFilename?: string | null;
+    receiptMimeType?: string | null;
+    receiptSizeBytes?: number | null;
+  },
 ): Promise<{ error?: string }> {
+  const body: Record<string, unknown> = { expense_id: expenseId, receipt_path: receiptPath };
+  if (meta) {
+    if (meta.receiptFilename !== undefined) body.receipt_filename = meta.receiptFilename;
+    if (meta.receiptMimeType !== undefined) body.receipt_mime_type = meta.receiptMimeType;
+    if (meta.receiptSizeBytes !== undefined) body.receipt_size_bytes = meta.receiptSizeBytes;
+  }
   const { data, error: fnError } = await supabase.functions.invoke('set-expense-receipt-path', {
-    body: { expense_id: expenseId, receipt_path: receiptPath },
+    body,
     headers: {
       Authorization: `Bearer ${accessToken}`,
     },

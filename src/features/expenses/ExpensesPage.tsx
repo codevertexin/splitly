@@ -76,6 +76,7 @@ export function ExpensesPage({ session }: ExpensesPageProps) {
   const [editReceiptFile, setEditReceiptFile] = useState<File | null>(null);
   const [editReceiptPreviewUrl, setEditReceiptPreviewUrl] = useState<string | null>(null);
   const [editReceiptRemoved, setEditReceiptRemoved] = useState(false);
+  const deepLinkHandledRef = useRef(false);
   const billing = useBillingGuard();
   const recentQuickFilterDays = useMemo(() => {
     const recentRaw = searchParams.get('recent');
@@ -277,6 +278,7 @@ export function ExpensesPage({ session }: ExpensesPageProps) {
   const storedReceiptPathForPreview =
     editingExpense?.receipt_path && !editReceiptRemoved ? editingExpense.receipt_path : null;
   const storedReceiptSignedUrl = useExpenseReceiptSignedUrl(storedReceiptPathForPreview);
+  const isEditingGroupWideExpense = Boolean(editingExpense && !editingExpense.event_id);
 
   const openEditModal = (expense: ExpenseListRow) => {
     if (!canEditExpense(expense)) return;
@@ -315,6 +317,22 @@ export function ExpensesPage({ session }: ExpensesPageProps) {
     setEditingExpense(null);
     setEditError(null);
   };
+
+  useEffect(() => {
+    if (deepLinkHandledRef.current) return;
+    if (expensesLoading || groupsLoading) return;
+    const targetExpenseId = searchParams.get('editExpenseId');
+    if (!targetExpenseId) {
+      deepLinkHandledRef.current = true;
+      return;
+    }
+    const target = expenses.find((e) => e.id === targetExpenseId);
+    deepLinkHandledRef.current = true;
+    if (target && canEditExpense(target)) {
+      openEditModal(target);
+      navigate('/expenses', { replace: true });
+    }
+  }, [expensesLoading, groupsLoading, searchParams, expenses, canEditExpense, navigate, openEditModal]);
 
   useEffect(() => {
     const loadMembers = async () => {
@@ -428,30 +446,23 @@ export function ExpensesPage({ session }: ExpensesPageProps) {
     }
 
     let receipt_path: string | null | undefined = undefined;
+    let receipt_filename: string | null | undefined = undefined;
+    let receipt_mime_type: string | null | undefined = undefined;
+    let receipt_size_bytes: number | null | undefined = undefined;
     if (editReceiptFile) {
       const path = buildExpenseReceiptObjectPath(editingExpense.group_id, editingExpense.id, editReceiptFile);
       const up = await uploadExpenseReceiptObject(supabase, path, editReceiptFile);
       if (up.error) {
-        setEditError(t('expenseForm.receiptUploadFailed'));
+        setEditError(t('expenseForm.receiptUploadFailedEdit'));
         return;
       }
       receipt_path = path;
+      receipt_filename = editReceiptFile.name;
+      receipt_mime_type = editReceiptFile.type || null;
+      receipt_size_bytes = editReceiptFile.size;
     } else if (editReceiptRemoved && editingExpense.receipt_path) {
       receipt_path = null;
     }
-
-    console.log('[edit-expense] payload', {
-      expenseId: editingExpense.id,
-      title: trimmedTitle,
-      amount_cents: amountCents,
-      description: editDescription.trim() ? editDescription.trim() : null,
-      split_method:
-        editSplitMethod === 'equal' && editSettleAwareEnabled && editSettleAwareAvailable ? 'manual' : editSplitMethod,
-      participant_ids: editParticipantIds,
-      splits,
-      status: editStatus,
-      receipt_path,
-    });
 
     const updatePayload: Parameters<typeof updateExpense>[1] = {
       title: trimmedTitle,
@@ -466,10 +477,17 @@ export function ExpensesPage({ session }: ExpensesPageProps) {
     if (receipt_path !== undefined) {
       updatePayload.receipt_path = receipt_path;
     }
+    if (receipt_filename !== undefined) {
+      updatePayload.receipt_filename = receipt_filename;
+    }
+    if (receipt_mime_type !== undefined) {
+      updatePayload.receipt_mime_type = receipt_mime_type;
+    }
+    if (receipt_size_bytes !== undefined) {
+      updatePayload.receipt_size_bytes = receipt_size_bytes;
+    }
 
     const result = await updateExpense(editingExpense.id, updatePayload);
-
-    console.log('[edit-expense] result', result);
     if (result.success) {
       const prevPath = editingExpense.receipt_path;
       if (receipt_path && prevPath && prevPath !== receipt_path) {
@@ -786,6 +804,8 @@ export function ExpensesPage({ session }: ExpensesPageProps) {
               value={editAmount}
               onChange={(e) => setEditAmount(e.target.value)}
               placeholder="0.00"
+              readOnly={isEditingGroupWideExpense}
+              className={isEditingGroupWideExpense ? 'bg-slate-100 cursor-not-allowed' : ''}
             />
           </div>
           <Input
@@ -804,6 +824,7 @@ export function ExpensesPage({ session }: ExpensesPageProps) {
             onOcrInterestClick={handleEditOcrInterestClick}
             disablePhoto={actionLoading}
             disableOcr={actionLoading}
+            scanReceiptInterestUserId={session.user.id}
           />
           <div className="space-y-1">
             <label className="block text-sm font-semibold text-slate-700">{t('groupExpense.expenseStatusLabel')}</label>
@@ -819,26 +840,42 @@ export function ExpensesPage({ session }: ExpensesPageProps) {
           </div>
           <div className="space-y-2">
             <span className="block text-sm font-semibold text-slate-700">{t('groupExpense.participantsLabel')}</span>
-            <div className="flex flex-wrap gap-2">
-              {editMembers.map((m) => (
-                <label
-                  key={m.user_id}
-                  className="inline-flex items-center gap-2.5 px-3 py-2 rounded-xl border border-slate-100 bg-slate-50 cursor-pointer text-sm max-w-full"
-                >
-                  <input
-                    type="checkbox"
-                    className="rounded border-slate-300 text-blue-600 focus:ring-blue-500 shrink-0"
-                    checked={editParticipantIds.includes(m.user_id)}
-                    onChange={() =>
-                      setEditParticipantIds((prev) =>
-                        prev.includes(m.user_id) ? prev.filter((id) => id !== m.user_id) : [...prev, m.user_id]
-                      )
-                    }
-                  />
-                  <span className="font-medium text-slate-800 truncate">{m.full_name || m.user_id}</span>
-                </label>
-              ))}
-            </div>
+            {isEditingGroupWideExpense ? (
+              <div className="flex flex-wrap gap-2">
+                {editParticipantIds.map((id) => {
+                  const m = editMembers.find((x) => x.user_id === id);
+                  return (
+                    <div
+                      key={id}
+                      className="inline-flex items-center gap-2.5 px-3 py-2 rounded-xl border border-slate-100 bg-slate-50 text-sm max-w-full"
+                    >
+                      <span className="font-medium text-slate-800 truncate">{m?.full_name || id}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="flex flex-wrap gap-2">
+                {editMembers.map((m) => (
+                  <label
+                    key={m.user_id}
+                    className="inline-flex items-center gap-2.5 px-3 py-2 rounded-xl border border-slate-100 bg-slate-50 cursor-pointer text-sm max-w-full"
+                  >
+                    <input
+                      type="checkbox"
+                      className="rounded border-slate-300 text-blue-600 focus:ring-blue-500 shrink-0"
+                      checked={editParticipantIds.includes(m.user_id)}
+                      onChange={() =>
+                        setEditParticipantIds((prev) =>
+                          prev.includes(m.user_id) ? prev.filter((id) => id !== m.user_id) : [...prev, m.user_id]
+                        )
+                      }
+                    />
+                    <span className="font-medium text-slate-800 truncate">{m.full_name || m.user_id}</span>
+                  </label>
+                ))}
+              </div>
+            )}
           </div>
           <div className="space-y-1.5">
             {editSplitMethod === 'equal' && editSettleAwareAvailable && (

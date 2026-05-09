@@ -1,7 +1,7 @@
 import React from 'react';
 import { Calendar, Users, ChevronRight, Clock } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
-import { Event } from '../../../types';
+import type { Event } from '../../../dbAliases';
 import { Card } from '../../../components/ui/Card';
 import { Badge } from '../../../components/ui/Badge';
 import { formatEventDateLabel } from '../datePresentation';

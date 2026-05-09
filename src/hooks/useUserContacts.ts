@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Session } from '@supabase/supabase-js';
 import { supabase } from '../lib/supabase';
-import type { UserContact } from '../types';
+import type { UserContact } from '../dbAliases';
 
 export type UserContactRow = UserContact & {
   contact_profile: { full_name: string | null; avatar_url: string | null; username: string | null } | null;

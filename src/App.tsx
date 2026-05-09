@@ -14,6 +14,7 @@ import { EventDetailPage } from './features/events/EventDetailPage';
 import { SettingsPage } from './features/settings/SettingsPage';
 import { ContactsPage } from './features/contacts/ContactsPage';
 import { PeopleDetailPage } from './features/people/PeopleDetailPage';
+import { ReportsPage } from './features/reports/ReportsPage';
 import { HelpPage } from './pages/HelpPage';
 import { Session } from '@supabase/supabase-js';
 import { Loader2, AlertCircle, ExternalLink } from 'lucide-react';
@@ -168,6 +169,7 @@ export default function App() {
               <Route path="people/:personId" element={<PeopleDetailPage session={session} />} />
               <Route path="expenses" element={<ExpensesPage session={session} />} />
               <Route path="events" element={<EventsPage session={session} />} />
+              <Route path="reports" element={<ReportsPage session={session} />} />
               <Route path="events/:id" element={<EventDetailPage session={session} />} />
               <Route path="settings" element={<SettingsPage session={session} />} />
               <Route path="help" element={<HelpPage />} />

@@ -4,19 +4,58 @@ import { supabase } from '../lib/supabase';
 import { EXPENSES_CHANGED_EVENT, expensesChangedAffectsGroup, notifyExpensesChanged } from '../lib/expenseEvents';
 import { filterAccountingEligibleExpenses } from '../lib/accountingExpenses';
 import { buildCreateExpenseV2Payload, type ExpenseSplitMethod } from '../lib/expenseV2Payload';
-import { Expense } from '../types';
+import type { Expense } from '../dbAliases';
 
-export type GroupExpenseRow = Expense & {
-  affects_balances?: boolean | null;
-  profiles?: { full_name: string | null; avatar_url: string | null; username: string | null } | null;
-  event?: {
+export type GroupExpenseRow = {
+  id: string;
+  group_id: string;
+  event_id: string | null;
+  title: string;
+  description: string | null;
+  amount_cents: number;
+  currency: string;
+  incurred_at: string;
+  paid_by_user_id: string;
+  created_by: string;
+  split_method: 'equal' | 'manual' | 'percentage';
+  status: 'draft' | 'confirmed';
+  participant_ids?: string[] | null;
+  deleted_at?: string | null;
+
+  receipt_path?: string | null;
+  receipt_filename?: string | null;
+  receipt_mime_type?: string | null;
+  receipt_size_bytes?: number | null;
+
+  batch_id?: string | null;
+  batch?: {
     id: string;
     title: string;
+    description: string | null;
+    is_active: boolean;
+    closed_at: string | null;
+    created_at?: string | null;
+  } | null;
+
+  profiles?: {
+    full_name?: string | null;
+    username?: string | null;
+    avatar_url?: string | null;
+  } | null;
+
+  event?: {
+    id: string;
+    title: string | null;
     status: string;
     starts_at?: string | null;
     ends_at?: string | null;
   } | null;
-  splits?: Array<{ user_id: string; share_cents: number; percentage: number | null }> | null;
+
+  splits?: Array<{
+    user_id: string;
+    share_cents: number;
+    percentage?: number | null;
+  }>;
 };
 
 export type CreateExpenseInput = {
@@ -25,6 +64,10 @@ export type CreateExpenseInput = {
   amount_cents: number;
   paid_by_user_id: string;
   participant_ids: string[];
+  receipt_path?: string | null;
+  receipt_filename?: string | null;
+  receipt_mime_type?: string | null;
+  receipt_size_bytes?: number | null;
   split_method: 'equal' | 'manual' | 'percentage' | 'settlement_aware';
   splits?: Array<{ user_id: string; share_cents?: number; percentage?: number }>;
   /** Defaults to confirmed when omitted (matches create-expense edge function). */
@@ -59,28 +102,55 @@ export function useGroupExpenses(session: Session | null, groupId: string | unde
 
       const { data, error: qError } = await supabase
         .from('expenses')
-        .select(
-          `
+        .select(`
+          id,
+          group_id,
+          event_id,
+          batch_id,
+          title,
+          description,
+          amount_cents,
+          currency,
+          split_method,
+          status,
+          incurred_at,
+          paid_by_user_id,
+          created_by,
+          affects_balances,
+          receipt_path,
+          receipt_filename,
+          receipt_mime_type,
+          receipt_size_bytes,
+          created_at,
+          updated_at,
+          deleted_at,
+          profiles!expenses_paid_by_user_id_fkey (
+            full_name,
+            username,
+            avatar_url
+          ),
+          event:events (
             id,
-            group_id,
-            event_id,
+            title,
+            status,
+            starts_at,
+            ends_at
+          ),
+          batch:expense_batches!expenses_batch_id_fkey (
+            id,
             title,
             description,
-            amount_cents,
-            currency,
-            paid_by_user_id,
-            receipt_path,
-            status,
-            affects_balances,
-            incurred_at,
-            created_at,
-            updated_at,
-            deleted_at,
-            profiles:profiles!expenses_paid_by_user_id_fkey(full_name, avatar_url, username),
-            event:events(id, title, status, starts_at, ends_at),
-            splits:expense_splits(user_id, share_cents, percentage)
-          `,
-        )
+            is_active,
+            closed_at,
+            created_at
+          ),
+          splits:expense_splits (
+            id,
+            user_id,
+            share_cents,
+            percentage
+          )
+        `)
         .eq('group_id', groupId)
         .is('deleted_at', null)
         .order('incurred_at', { ascending: false });
@@ -92,12 +162,15 @@ export function useGroupExpenses(session: Session | null, groupId: string | unde
         const profile = Array.isArray(prof) ? prof[0] : prof;
         const ev = row.event;
         const event = Array.isArray(ev) ? ev[0] : ev;
-      
+        const b = row.batch;
+        const batch = Array.isArray(b) ? b[0] : b;
+
         return {
           ...row,
           affects_balances: row.affects_balances ?? null,
           profiles: profile ?? null,
           event: event ?? null,
+          batch: batch ?? null,
           splits: row.splits ?? [],
         } as GroupExpenseRow;
       });
@@ -146,6 +219,10 @@ export function useGroupExpenses(session: Session | null, groupId: string | unde
         splitMethod: input.split_method as ExpenseSplitMethod,
         splits: input.splits,
         status: input.status,
+        receiptPath: input.receipt_path ?? null,
+        receiptFilename: input.receipt_filename,
+        receiptMimeType: input.receipt_mime_type,
+        receiptSizeBytes: input.receipt_size_bytes,
       });
       
       const { data, error: fnError } = await supabase.functions.invoke('create-expense-v2', {
@@ -235,6 +312,9 @@ export function useGroupExpenses(session: Session | null, groupId: string | unde
       status: 'draft' | 'confirmed';
       /** Omit to leave unchanged; `null` clears stored receipt path after storage deletes. */
       receipt_path?: string | null;
+      receipt_filename?: string | null;
+      receipt_mime_type?: string | null;
+      receipt_size_bytes?: number | null;
     }
   ) => {
     if (!session || !groupId) {
@@ -257,17 +337,22 @@ export function useGroupExpenses(session: Session | null, groupId: string | unde
       if (Object.prototype.hasOwnProperty.call(input, 'receipt_path')) {
         body.receipt_path = input.receipt_path ?? null;
       }
-  
-      console.log('[update-expense-v2] body', body);
-  
+      if (Object.prototype.hasOwnProperty.call(input, 'receipt_filename')) {
+        body.receipt_filename = input.receipt_filename ?? null;
+      }
+      if (Object.prototype.hasOwnProperty.call(input, 'receipt_mime_type')) {
+        body.receipt_mime_type = input.receipt_mime_type ?? null;
+      }
+      if (Object.prototype.hasOwnProperty.call(input, 'receipt_size_bytes')) {
+        body.receipt_size_bytes = input.receipt_size_bytes ?? null;
+      }
+
       const { data, error: fnError } = await supabase.functions.invoke('update-expense-v2', {
         body,
         headers: {
           Authorization: `Bearer ${session.access_token}`,
         },
       });
-  
-      console.log('[update-expense-v2] response', data, fnError);
   
       if (fnError) {
         throw fnError;

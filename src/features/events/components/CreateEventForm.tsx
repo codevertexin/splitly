@@ -4,7 +4,7 @@ import { motion } from 'motion/react';
 import { useTranslation } from 'react-i18next';
 import { Input } from '../../../components/ui/Input';
 import { Button } from '../../../components/ui/Button';
-import { Group } from '../../../types';
+import type { Group } from '../../../dbAliases';
 
 interface CreateEventFormProps {
   groups: Group[];

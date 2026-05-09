@@ -3,7 +3,8 @@ import { useTranslation } from 'react-i18next';
 import { Modal } from '../../../components/ui/Modal';
 import { Button } from '../../../components/ui/Button';
 import { Input } from '../../../components/ui/Input';
-import { Mail } from 'lucide-react';
+import { Loader2, Mail } from 'lucide-react';
+import { isSupabaseConfigured } from '../../../lib/supabase';
 import { trackProductEvent } from '../../../lib/productTracking';
 import {
   PRODUCT_EVENT_BILLING_INTEREST_MODAL_OPENED,
@@ -11,7 +12,11 @@ import {
   PRODUCT_EVENT_BILLING_INTEREST_SUBMITTED,
   SCAN_RECEIPT_FEATURE_KEY,
 } from '../constants/billing.constants';
-import { hasRegisteredFeatureInterest, submitFeatureInterest } from '../services/featureInterest.service';
+import {
+  fetchFeatureInterestRegistered,
+  hasRegisteredFeatureInterest,
+  submitFeatureInterest,
+} from '../services/featureInterest.service';
 import type { SubscriptionTier } from '../types/billing.types';
 
 export interface FeatureInterestModalProps {
@@ -65,6 +70,7 @@ export function FeatureInterestModal({
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState(false);
   const [alreadyRegistered, setAlreadyRegistered] = useState(false);
+  const [interestCheckPending, setInterestCheckPending] = useState(false);
   /** One init + analytics pass per modal open (avoid duplicate events if tier/source props change while open). */
   const openedCycleRef = useRef(false);
 
@@ -80,24 +86,57 @@ export function FeatureInterestModal({
     setMessage('');
     setError(null);
     setDone(false);
+    setAlreadyRegistered(false);
 
     const uid = userId?.trim();
-    const already = uid ? hasRegisteredFeatureInterest(uid, featureKey) : false;
-    setAlreadyRegistered(already);
 
-    const meta = interestMetadataBase({
-      featureKey,
-      flowSource,
-      subscriptionTier,
-      featureUnreleased,
-      alreadyRegistered: already,
-    });
+    const fireOpenAnalytics = (already: boolean) => {
+      const meta = interestMetadataBase({
+        featureKey,
+        flowSource,
+        subscriptionTier,
+        featureUnreleased,
+        alreadyRegistered: already,
+      });
+      void trackProductEvent(PRODUCT_EVENT_BILLING_INTEREST_MODAL_OPENED, { metadata: meta });
+      if (already) {
+        void trackProductEvent(PRODUCT_EVENT_BILLING_INTEREST_REPEAT_OPEN, { metadata: meta });
+      }
+    };
 
-    void trackProductEvent(PRODUCT_EVENT_BILLING_INTEREST_MODAL_OPENED, { metadata: meta });
-
-    if (already) {
-      void trackProductEvent(PRODUCT_EVENT_BILLING_INTEREST_REPEAT_OPEN, { metadata: meta });
+    if (!uid) {
+      setInterestCheckPending(false);
+      fireOpenAnalytics(false);
+      return;
     }
+
+    const local = hasRegisteredFeatureInterest(uid, featureKey);
+    if (local) {
+      setAlreadyRegistered(true);
+      setInterestCheckPending(false);
+      fireOpenAnalytics(true);
+      return;
+    }
+
+    if (!isSupabaseConfigured) {
+      setInterestCheckPending(false);
+      fireOpenAnalytics(false);
+      return;
+    }
+
+    setInterestCheckPending(true);
+    let cancelled = false;
+    void (async () => {
+      const server = await fetchFeatureInterestRegistered(uid, featureKey);
+      if (cancelled) return;
+      setAlreadyRegistered(server);
+      setInterestCheckPending(false);
+      fireOpenAnalytics(server);
+    })();
+
+    return () => {
+      cancelled = true;
+    };
   }, [isOpen, defaultEmail, featureKey, userId, flowSource, subscriptionTier, featureUnreleased]);
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -112,7 +151,11 @@ export function FeatureInterestModal({
     });
     setLoading(false);
     if (!result.ok) {
-      setError(result.error || t('billing.interestModal.submitError'));
+      const msg =
+        result.error === 'AUTH_SESSION'
+          ? t('billing.interestModal.authError')
+          : result.error || t('billing.interestModal.submitError');
+      setError(msg);
       return;
     }
     if (result.deduped) {
@@ -140,7 +183,12 @@ export function FeatureInterestModal({
       size="md"
       stackClassName="z-[100]"
     >
-      {alreadyRegistered ? (
+      {interestCheckPending ? (
+        <div className="flex flex-col items-center justify-center gap-3 py-10 text-slate-600">
+          <Loader2 className="h-8 w-8 animate-spin text-blue-600" aria-hidden />
+          <p className="text-sm">{t('billing.interestModal.checking')}</p>
+        </div>
+      ) : alreadyRegistered ? (
         <div className="space-y-4">
           <div className="rounded-2xl border border-sky-200 bg-sky-50/90 px-4 py-3 text-sm font-medium text-sky-950">
             {t('billing.interestModal.alreadyRegisteredBanner')}

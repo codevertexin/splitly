@@ -19,6 +19,7 @@ import {
   CalendarCheck2,
   AlertTriangle,
   Loader2,
+  FileText,
 } from 'lucide-react';
 import { Button } from './ui/Button';
 import { MemberAvatar } from './MemberAvatar';
@@ -37,6 +38,7 @@ const NAV_DEFS = [
   { id: 'dashboard' as const, icon: LayoutDashboard, path: '/dashboard' },
   { id: 'groups' as const, icon: Users, path: '/groups' },
   { id: 'events' as const, icon: Calendar, path: '/events' },
+  { id: 'reports' as const, icon: FileText, path: '/reports' },
   { id: 'expenses' as const, icon: CreditCard, path: '/expenses' },
   { id: 'contacts' as const, icon: ContactRound, path: '/people' },
 ];
@@ -232,11 +234,6 @@ export function AppLayout({ session }: AppLayoutProps) {
         </div>
 
         <div className="mt-auto p-6 space-y-4 border-t border-slate-50">
-          <Button onClick={() => navigate('/groups')} variant="outline" className="w-full">
-            <Plus className="w-4 h-4 mr-2" />
-            {t('layout.createGroup')}
-          </Button>
-
           <button
             type="button"
             onClick={handleSignOut}
@@ -275,14 +272,6 @@ export function AppLayout({ session }: AppLayoutProps) {
           ))}
         </nav>
         <div className="mt-auto flex flex-col items-center gap-2 pt-2 border-t border-slate-50 w-full px-1.5 pb-2">
-          <button
-            type="button"
-            title={t('layout.createGroup')}
-            onClick={() => navigate('/groups')}
-            className="w-11 h-11 flex items-center justify-center rounded-xl text-slate-500 hover:bg-slate-50 hover:text-blue-600 transition-all"
-          >
-            <Plus className="w-5 h-5" />
-          </button>
           <button
             type="button"
             title={t('layout.signOut')}
