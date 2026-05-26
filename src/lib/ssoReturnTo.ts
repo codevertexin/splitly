@@ -3,6 +3,33 @@ import { getPendingGroupInviteToken } from './groupInviteToken';
 const STORAGE_KEY = 'splitly_sso_return_to';
 export const DEFAULT_SSO_RETURN = '/dashboard';
 
+/** sessionStorage keys marking a ticket as already consumed (avoid double SSO). */
+export const SSO_TICKET_DONE_PREFIX = 'splitly_sso_ticket_done:';
+
+export function ssoTicketDoneKey(ticket: string): string {
+  return `${SSO_TICKET_DONE_PREFIX}${ticket}`;
+}
+
+/** Remove all SSO ticket consumption markers (sessionStorage). */
+export function clearSsoTicketConsumptionMarkers(): void {
+  try {
+    const keys: string[] = [];
+    for (let i = 0; i < sessionStorage.length; i++) {
+      const key = sessionStorage.key(i);
+      if (key?.startsWith(SSO_TICKET_DONE_PREFIX)) keys.push(key);
+    }
+    keys.forEach((k) => sessionStorage.removeItem(k));
+  } catch {
+    /* ignore */
+  }
+}
+
+/** Return_to + ticket markers used by the SSO callback flow. */
+export function clearSsoFlowSessionMarkers(): void {
+  clearStoredSsoReturnTo();
+  clearSsoTicketConsumptionMarkers();
+}
+
 /** Canonical SSO callback pathname (never use as post-login destination). */
 export const SSO_CALLBACK_PATH = '/sso/callback';
 

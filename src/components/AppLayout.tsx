@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Session } from '@supabase/supabase-js';
 import { supabase } from '../lib/supabase';
-import { getAuthLogoutUrl } from '../lib/codevertexAuth';
+import { logoutFromSplitlyAndCore } from '../lib/logout';
 import { useLocation, useNavigate, Outlet } from 'react-router-dom';
 import {
   Plus,
@@ -134,10 +134,8 @@ export function AppLayout({ session }: AppLayoutProps) {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [userMenuOpen, notificationsOpen]);
 
-  const handleSignOut = async () => {
-    localStorage.removeItem('splitly_last_group_id');
-    await supabase.auth.signOut();
-    window.location.href = getAuthLogoutUrl();
+  const handleSignOut = () => {
+    void logoutFromSplitlyAndCore();
   };
 
   const navItems = useMemo(

@@ -18,6 +18,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { BrandLogo } from './BrandLogo';
 import { formatCurrencyCents } from '../lib/dateTime';
 import { useTranslation } from 'react-i18next';
+import { logoutFromSplitlyAndCore } from '../lib/logout';
 
 interface DashboardProps {
   session: Session;
@@ -121,9 +122,8 @@ export function Dashboard({ session }: DashboardProps) {
     }
   };
 
-  const handleSignOut = async () => {
-    localStorage.removeItem('splitly_last_group_id');
-    await supabase.auth.signOut();
+  const handleSignOut = () => {
+    void logoutFromSplitlyAndCore();
   };
 
   const handleSettleUp = async () => {

@@ -76,9 +76,14 @@ export default function App() {
 
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, nextSession) => {
-      setSession(nextSession);
-      if (nextSession?.user?.id) void syncLanguageFromProfile(nextSession.user.id);
+    } = supabase.auth.onAuthStateChange((event, nextSession) => {
+      if (event === 'SIGNED_OUT' || event === 'USER_DELETED') {
+        setSession(null);
+      } else {
+        setSession(nextSession ?? null);
+      }
+      const uid = nextSession?.user?.id;
+      if (uid) void syncLanguageFromProfile(uid);
     });
 
     supabase.auth.getSession().then(({ data: { session: initial } }) => {

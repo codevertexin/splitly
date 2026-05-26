@@ -4,12 +4,14 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { AlertCircle, Loader2 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { APP_CODE } from '../lib/codevertexConfig';
-import { getAuthLogoutUrl, getAuthRegisterUrl } from '../lib/codevertexAuth';
+import { getAuthRegisterUrl } from '../lib/codevertexAuth';
 import {
   clearStoredSsoReturnTo,
   DEFAULT_SSO_RETURN,
   resolveSafePostSsoDestination,
+  ssoTicketDoneKey,
 } from '../lib/ssoReturnTo';
+import { logoutFromSplitlyAndCore } from '../lib/logout';
 import { BrandLogo } from '../components/BrandLogo';
 
 type SsoCompleteSuccess = {
@@ -31,15 +33,9 @@ type SsoCompleteError = {
 
 type SsoCompleteResponse = SsoCompleteSuccess | SsoCompleteError;
 
-const TICKET_DONE_PREFIX = 'splitly_sso_ticket_done:';
-
-function ticketDoneKey(ticket: string): string {
-  return `${TICKET_DONE_PREFIX}${ticket}`;
-}
-
 function wasTicketConsumed(ticket: string): boolean {
   try {
-    return sessionStorage.getItem(ticketDoneKey(ticket)) === '1';
+    return sessionStorage.getItem(ssoTicketDoneKey(ticket)) === '1';
   } catch {
     return false;
   }
@@ -47,20 +43,7 @@ function wasTicketConsumed(ticket: string): boolean {
 
 function markTicketConsumed(ticket: string): void {
   try {
-    sessionStorage.setItem(ticketDoneKey(ticket), '1');
-  } catch {
-    /* ignore */
-  }
-}
-
-function clearConsumedTicketMarkers(): void {
-  try {
-    const keys: string[] = [];
-    for (let i = 0; i < sessionStorage.length; i++) {
-      const key = sessionStorage.key(i);
-      if (key?.startsWith(TICKET_DONE_PREFIX)) keys.push(key);
-    }
-    keys.forEach((key) => sessionStorage.removeItem(key));
+    sessionStorage.setItem(ssoTicketDoneKey(ticket), '1');
   } catch {
     /* ignore */
   }
@@ -170,11 +153,8 @@ export function SsoCallbackPage() {
     })();
   }, [navigate, searchParams, t]);
 
-  const handleSignOutAndRetry = async () => {
-    clearStoredSsoReturnTo();
-    clearConsumedTicketMarkers();
-    await supabase.auth.signOut();
-    window.location.replace(getAuthLogoutUrl(window.location.origin));
+  const handleSignOutAndRetry = () => {
+    void logoutFromSplitlyAndCore();
   };
 
   const handleCreateCodevertexAccount = () => {
@@ -193,7 +173,7 @@ export function SsoCallbackPage() {
           <div className="mt-6 flex flex-col gap-3">
             <button
               type="button"
-              onClick={() => void handleSignOutAndRetry()}
+              onClick={handleSignOutAndRetry}
               className="w-full rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-blue-700"
             >
               {t('sso.callback.signOutAndRetry')}
