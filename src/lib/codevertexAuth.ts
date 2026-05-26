@@ -77,17 +77,30 @@ export function getAuthForgotPasswordUrl(): string {
 }
 
 /**
- * Auth Core account profile (global identity). Returns to Splitly after editing.
- * Example: `…/account/profile?app=SPLITLY&return_to=https://splitly…/settings`
+ * Auth Core account profile (full page, not embedded).
+ * `returnTo`: absolute `https://…` or path starting with `/` — relative paths become `origin + path`.
+ *
+ * Example:
+ * `https://auth.codevertex.cc/account/profile?app=SPLITLY&return_to=https%3A%2F%2Fsplitly.codevertex.cc%2Fsettings`
  */
-export function getAuthProfileManageUrl(returnPath = '/settings'): string {
-  const returnTo =
-    typeof window !== 'undefined'
-      ? `${stripTrailingSlash(window.location.origin)}${returnPath.startsWith('/') ? returnPath : `/${returnPath}`}`
-      : returnPath;
-  return buildAuthCoreUrl('/account/profile', {
-    return_to: returnTo,
-  });
+export function getAuthProfileManageUrl(returnTo?: string): string {
+  const base = stripTrailingSlash(AUTH_BASE_URL);
+  const raw = (returnTo ?? '/settings').trim() || '/settings';
+
+  let absoluteReturnTo: string;
+  if (/^https?:\/\//i.test(raw)) {
+    absoluteReturnTo = raw;
+  } else if (typeof window !== 'undefined' && window.location?.origin) {
+    const path = raw.startsWith('/') ? raw : `/${raw}`;
+    absoluteReturnTo = `${stripTrailingSlash(window.location.origin)}${path}`;
+  } else {
+    absoluteReturnTo = raw.startsWith('/') ? raw : `/${raw}`;
+  }
+
+  const url = new URL(`${base}/account/profile`);
+  url.searchParams.set('app', APP_CODE);
+  url.searchParams.set('return_to', absoluteReturnTo);
+  return url.toString();
 }
 
 /**
