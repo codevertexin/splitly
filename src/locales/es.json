@@ -48,7 +48,10 @@
     "signInWithAuthCore": "Continuar con Auth Core",
     "signUpWithAuthCore": "Crear cuenta en Auth Core",
     "useLocalAuth": "Usar correo y contraseña en Splitly",
-    "backToAuthCore": "Volver al inicio de sesión Auth Core"
+    "backToAuthCore": "Volver al inicio de sesión Auth Core",
+    "redirectingToSecureLogin": "Redirigiendo al inicio de sesión seguro…",
+    "devLoginBanner": "Solo desarrollo — login local Supabase. No disponible en producción.",
+    "genericError": "Algo salió mal. Inténtalo de nuevo."
   },
   "sso": {
     "callback": {

@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Session } from '@supabase/supabase-js';
 import { supabase } from '../lib/supabase';
-import { getAuthLogoutUrl, isAuthCoreEnabled } from '../lib/codevertexAuth';
+import { getAuthLogoutUrl } from '../lib/codevertexAuth';
 import { useLocation, useNavigate, Outlet } from 'react-router-dom';
 import {
   Plus,
@@ -137,11 +137,7 @@ export function AppLayout({ session }: AppLayoutProps) {
   const handleSignOut = async () => {
     localStorage.removeItem('splitly_last_group_id');
     await supabase.auth.signOut();
-    if (isAuthCoreEnabled()) {
-      window.location.href = getAuthLogoutUrl();
-      return;
-    }
-    navigate('/');
+    window.location.href = getAuthLogoutUrl();
   };
 
   const navItems = useMemo(

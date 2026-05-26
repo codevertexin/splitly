@@ -4,7 +4,6 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { AlertCircle, Loader2 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { APP_CODE } from '../lib/codevertexConfig';
-import { isAuthCoreEnabled } from '../lib/codevertexAuth';
 import {
   clearStoredSsoReturnTo,
   getStoredSsoReturnTo,
@@ -89,11 +88,6 @@ export function SsoCallbackPage() {
   const startedRef = useRef(false);
 
   useEffect(() => {
-    if (!isAuthCoreEnabled()) {
-      setError(t('sso.callback.disabled'));
-      return;
-    }
-
     if (startedRef.current) return;
     startedRef.current = true;
 

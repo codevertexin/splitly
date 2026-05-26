@@ -21,6 +21,7 @@ import { Session } from '@supabase/supabase-js';
 import { Loader2, AlertCircle, ExternalLink } from 'lucide-react';
 import { InviteEntryPage } from './features/groups/InviteEntryPage';
 import { SsoCallbackPage } from './pages/SsoCallbackPage';
+import { DevLoginPage } from './pages/DevLoginPage';
 import { BrandLogo } from './components/BrandLogo';
 import { AppInviteRefCapture } from './components/AppInviteRefCapture';
 import { clearStoredAppInviteRef, getStoredAppInviteRef } from './lib/appInviteRef';
@@ -158,6 +159,9 @@ export default function App() {
       <div className="min-h-screen bg-slate-50 font-sans text-slate-900">
         <Routes>
           <Route path="/sso/callback" element={<SsoCallbackPage />} />
+          {import.meta.env.DEV && (
+            <Route path="/dev-login" element={<DevLoginPage />} />
+          )}
           <Route path="/invite/:token" element={<InviteEntryPage session={session} />} />
           {!session ? (
             <Route path="*" element={<Auth />} />

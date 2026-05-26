@@ -1,5 +1,14 @@
+import { getPendingGroupInviteToken } from './groupInviteToken';
+
 const STORAGE_KEY = 'splitly_sso_return_to';
 const DEFAULT_RETURN = '/dashboard';
+
+/** Post-SSO destination when no explicit return_to was stored. */
+export function resolveSsoReturnPath(): string {
+  const pendingInvite = getPendingGroupInviteToken();
+  if (pendingInvite) return `/invite/${pendingInvite}`;
+  return DEFAULT_RETURN;
+}
 
 /**
  * Allow only same-origin relative paths. Reject protocol-relative, absolute URLs, and backslashes.
