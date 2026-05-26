@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Session } from '@supabase/supabase-js';
 import { supabase } from '../lib/supabase';
+import { getAuthLogoutUrl, isAuthCoreEnabled } from '../lib/codevertexAuth';
 import { useLocation, useNavigate, Outlet } from 'react-router-dom';
 import {
   Plus,
@@ -28,6 +29,13 @@ import { ProfileNameGate } from './ProfileNameGate';
 import { useNotifications } from '../hooks/useNotifications';
 import { notifyExpensesChanged } from '../lib/expenseEvents';
 import { BillingGuardProvider } from '../features/billing/BillingGuardProvider';
+import { LegalFooterLinks } from './LegalFooterLinks';
+import {
+  getHelpUrl,
+  LOCAL_HELP_PATH,
+  mapPathnameToHelpScreen,
+  shouldUseLocalHelp,
+} from '../lib/codevertexConfig';
 
 interface AppLayoutProps {
   session: Session;
@@ -129,6 +137,10 @@ export function AppLayout({ session }: AppLayoutProps) {
   const handleSignOut = async () => {
     localStorage.removeItem('splitly_last_group_id');
     await supabase.auth.signOut();
+    if (isAuthCoreEnabled()) {
+      window.location.href = getAuthLogoutUrl();
+      return;
+    }
     navigate('/');
   };
 
@@ -145,6 +157,21 @@ export function AppLayout({ session }: AppLayoutProps) {
     navigate(path);
     setUserMenuOpen(false);
     setNotificationsOpen(false);
+  };
+
+  const openSupportAndHelp = () => {
+    setUserMenuOpen(false);
+    setNotificationsOpen(false);
+    if (shouldUseLocalHelp()) {
+      navigate(LOCAL_HELP_PATH);
+      return;
+    }
+    const screen = mapPathnameToHelpScreen(location.pathname);
+    const helpLocale =
+      i18n.language === 'pt-PT' || i18n.language === 'pt-BR' || i18n.language === 'es'
+        ? i18n.language
+        : 'en';
+    window.open(getHelpUrl(screen, helpLocale), '_blank', 'noopener,noreferrer');
   };
 
   const locale = useMemo(() => {
@@ -471,11 +498,11 @@ export function AppLayout({ session }: AppLayoutProps) {
                   <button
                     type="button"
                     role="menuitem"
-                    onClick={() => go('/help')}
+                    onClick={openSupportAndHelp}
                     className="w-full flex items-center gap-2 px-3 py-2.5 text-sm font-medium text-slate-700 hover:bg-slate-50 text-left"
                   >
                     <CircleHelp className="w-4 h-4" />
-                    {t('layout.help')}
+                    {t('layout.supportAndHelp')}
                   </button>
                   <button
                     type="button"
@@ -522,9 +549,12 @@ export function AppLayout({ session }: AppLayoutProps) {
           </BillingGuardProvider>
         </div>
 
-        <footer className="mt-auto px-4 pb-[calc(5rem+env(safe-area-inset-bottom))] pt-2 sm:px-6 md:pb-8 lg:px-8 text-center text-slate-400 text-xs">
-          {t('layout.loggedInAs')}{' '}
-          <span className="text-slate-600 font-medium break-all">{session.user.email}</span>
+        <footer className="mt-auto flex flex-col items-center gap-2 px-4 pb-[calc(5rem+env(safe-area-inset-bottom))] pt-3 sm:px-6 md:pb-8 lg:px-8 text-center text-slate-400 text-xs">
+          <LegalFooterLinks />
+          <p>
+            {t('layout.loggedInAs')}{' '}
+            <span className="text-slate-600 font-medium break-all">{session.user.email}</span>
+          </p>
         </footer>
 
         {/* Mobile bottom navigation */}

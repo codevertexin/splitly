@@ -43,7 +43,23 @@
     "username": "Nome de utilizador",
     "usernamePlaceholder": "ex: ricardo.matias",
     "usernameTooShort": "O nome de utilizador deve ter pelo menos 3 caracteres.",
-    "usernameInvalid": "Use apenas letras minúsculas, números, ponto ou underscore."
+    "usernameInvalid": "Use apenas letras minúsculas, números, ponto ou underscore.",
+    "taglineAuthCore": "Entre com sua conta CodeVertex",
+    "signInWithAuthCore": "Continuar com Auth Core",
+    "signUpWithAuthCore": "Criar conta no Auth Core",
+    "useLocalAuth": "Usar e-mail e senha na Splitly",
+    "backToAuthCore": "Voltar ao login Auth Core"
+  },
+  "sso": {
+    "callback": {
+      "signingIn": "Concluindo o login…",
+      "errorTitle": "Não foi possível concluir o login",
+      "backToLogin": "Voltar ao login",
+      "missingTicket": "Ticket SSO ausente. Inicie o login novamente na página de entrada.",
+      "invalidApp": "Este link não é para a Splitly (app={{app}}).",
+      "disabled": "Login Auth Core não está habilitado neste ambiente.",
+      "genericError": "Algo deu errado ao concluir o login. Tente novamente."
+    }
   },
   "layout": {
     "nav": {
@@ -79,7 +95,58 @@
     "mainNav": "Principal",
     "loggedInAs": "Conectado como",
     "accountMenu": "Menu da conta",
-    "help": "Ajuda"
+    "help": "Ajuda",
+    "supportAndHelp": "Suporte e Ajuda"
+  },
+  "legal": {
+    "footerNav": "Legal e privacidade",
+    "links": {
+      "privacy": "Privacidade",
+      "terms": "Termos",
+      "cookies": "Cookies",
+      "gdpr": "LGPD",
+      "deleteData": "Excluir dados",
+      "contact": "Contato"
+    },
+    "notFoundTitle": "Página não encontrada",
+    "notFoundBody": "Esta página legal não existe.",
+    "pages": {
+      "privacy": {
+        "title": "Política de privacidade",
+        "subtitle": "Como tratamos seus dados pessoais no Splitly.",
+        "body": "Coletamos apenas o necessário para gerenciar despesas compartilhadas: dados da conta, participação em grupos e despesas que você registra. Os dados são armazenados com segurança e só são visíveis aos membros dos seus grupos, conforme as permissões do app."
+      },
+      "terms": {
+        "title": "Termos de uso",
+        "subtitle": "Regras de uso do Splitly.",
+        "body": "Ao usar o Splitly você concorda em utilizar o serviço de forma lícita e manter suas credenciais seguras. O app ajuda a registrar despesas compartilhadas; os acertos refletem o que você confirma — sempre verifique os pagamentos reais entre as pessoas."
+      },
+      "cookies": {
+        "title": "Cookies",
+        "subtitle": "Cookies e tecnologias semelhantes.",
+        "body": "Usamos cookies essenciais e armazenamento local para manter a sessão e preferências (por exemplo idioma). Não usamos cookies de publicidade de terceiros."
+      },
+      "gdpr": {
+        "title": "LGPD",
+        "subtitle": "Seus direitos de proteção de dados.",
+        "body": "Você pode solicitar acesso, correção, portabilidade ou exclusão dos seus dados pessoais, e se opor a certos tratamentos.",
+        "point1": "Entre em contato pelo link Contato para qualquer solicitação.",
+        "point2": "Você também pode gerenciar dados em Configurações, quando disponível.",
+        "point3": "Respondemos a pedidos verificados nos prazos legais."
+      },
+      "deleteData": {
+        "title": "Excluir seus dados",
+        "subtitle": "Como remover suas informações do Splitly.",
+        "body": "Você pode sair a qualquer momento. Para remover a conta e dados pessoais associados, entre em contato ou use as opções em Configurações quando estiverem disponíveis.",
+        "settingsLink": "Abrir Configurações"
+      },
+      "contact": {
+        "title": "Contato",
+        "subtitle": "Dúvidas, suporte ou solicitações de privacidade.",
+        "body": "Para ajuda a usar o Splitly, abra Suporte e Ajuda no app. Para privacidade ou dados, use o e-mail indicado na documentação ou site do produto.",
+        "helpLink": "Ir para Suporte e Ajuda"
+      }
+    }
   },
   "common": {
     "cancel": "Cancelar"

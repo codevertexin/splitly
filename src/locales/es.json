@@ -43,7 +43,23 @@
     "username": "Nombre de usuario",
     "usernamePlaceholder": "Ej.: ricardo.matias",
     "usernameTooShort": "El nombre de usuario debe tener al menos 3 caracteres.",
- "usernameInvalid": "Utilice solo letras minúsculas, números, puntos o guiones bajos."
+    "usernameInvalid": "Utilice solo letras minúsculas, números, puntos o guiones bajos.",
+    "taglineAuthCore": "Inicia sesión con tu cuenta CodeVertex",
+    "signInWithAuthCore": "Continuar con Auth Core",
+    "signUpWithAuthCore": "Crear cuenta en Auth Core",
+    "useLocalAuth": "Usar correo y contraseña en Splitly",
+    "backToAuthCore": "Volver al inicio de sesión Auth Core"
+  },
+  "sso": {
+    "callback": {
+      "signingIn": "Completando el inicio de sesión…",
+      "errorTitle": "No se pudo completar el inicio de sesión",
+      "backToLogin": "Volver al login",
+      "missingTicket": "Falta el ticket SSO. Vuelve a iniciar sesión desde la página de acceso.",
+      "invalidApp": "Este enlace no es para Splitly (app={{app}}).",
+      "disabled": "El inicio de sesión Auth Core no está activo en este despliegue.",
+      "genericError": "Algo falló al completar el inicio de sesión. Inténtalo de nuevo."
+    }
   },
   "layout": {
     "nav": {
@@ -79,7 +95,58 @@
     "mainNav": "Principal",
     "loggedInAs": "Sesión iniciada como",
     "accountMenu": "Menú de la cuenta",
-    "help": "Ayuda"
+    "help": "Ayuda",
+    "supportAndHelp": "Soporte y ayuda"
+  },
+  "legal": {
+    "footerNav": "Legal y privacidad",
+    "links": {
+      "privacy": "Privacidad",
+      "terms": "Términos",
+      "cookies": "Cookies",
+      "gdpr": "RGPD",
+      "deleteData": "Eliminar datos",
+      "contact": "Contacto"
+    },
+    "notFoundTitle": "Página no encontrada",
+    "notFoundBody": "Esta página legal no existe.",
+    "pages": {
+      "privacy": {
+        "title": "Política de privacidad",
+        "subtitle": "Cómo tratamos tus datos personales en Splitly.",
+        "body": "Recopilamos solo lo necesario para gestionar gastos compartidos: datos de cuenta, pertenencia a grupos y gastos que introduces. Los datos se almacenan de forma segura y solo son visibles para los miembros de tus grupos, según los permisos de la app."
+      },
+      "terms": {
+        "title": "Términos de uso",
+        "subtitle": "Reglas de uso de Splitly.",
+        "body": "Al usar Splitly aceptas utilizar el servicio de forma lícita y mantener tus credenciales seguras. La app ayuda a registrar gastos compartidos; las liquidaciones reflejan lo que confirmas — verifica siempre los pagos reales entre las personas."
+      },
+      "cookies": {
+        "title": "Cookies",
+        "subtitle": "Cookies y tecnologías similares.",
+        "body": "Usamos cookies esenciales y almacenamiento local para mantener la sesión y preferencias (por ejemplo idioma). No usamos cookies de publicidad de terceros."
+      },
+      "gdpr": {
+        "title": "RGPD",
+        "subtitle": "Tus derechos bajo la protección de datos en la UE.",
+        "body": "Si estás en el Espacio Económico Europeo, puedes solicitar acceso, rectificación, portabilidad o eliminación de tus datos personales, y oponerte a ciertos tratamientos.",
+        "point1": "Contáctanos mediante el enlace Contacto para cualquier solicitud.",
+        "point2": "También puedes gestionar datos en Ajustes, cuando esté disponible.",
+        "point3": "Respondemos a solicitudes verificadas en los plazos legales."
+      },
+      "deleteData": {
+        "title": "Eliminar tus datos",
+        "subtitle": "Cómo quitar tu información de Splitly.",
+        "body": "Puedes cerrar sesión en cualquier momento. Para eliminar la cuenta y datos personales asociados, contáctanos o usa las opciones en Ajustes cuando estén disponibles.",
+        "settingsLink": "Abrir Ajustes"
+      },
+      "contact": {
+        "title": "Contacto",
+        "subtitle": "Preguntas, soporte o solicitudes de privacidad.",
+        "body": "Para ayuda con Splitly, abre Soporte y ayuda en la app. Para privacidad o datos, usa el correo indicado en la documentación o web del producto.",
+        "helpLink": "Ir a Soporte y ayuda"
+      }
+    }
   },
   "common": {
     "cancel": "Cancelar"

@@ -8,9 +8,23 @@ import { getStoredAppInviteRef } from '../lib/appInviteRef';
 import { trackProductEvent } from '../lib/productTracking';
 import { LanguageSwitcherInline } from './LanguageSwitcherInline';
 import { getPendingGroupInviteToken } from '../lib/groupInviteToken';
+import {
+  getAuthForgotPasswordUrl,
+  getAuthLoginUrl,
+  getAuthRegisterUrl,
+  isAuthCoreEnabled,
+} from '../lib/codevertexAuth';
+
+function resolveSsoReturnTo(): string {
+  const pendingInvite = getPendingGroupInviteToken();
+  if (pendingInvite) return `/invite/${pendingInvite}`;
+  return '/dashboard';
+}
 
 export function Auth() {
   const { t } = useTranslation();
+  const authCoreEnabled = isAuthCoreEnabled();
+  const [showLocalAuth, setShowLocalAuth] = useState(!authCoreEnabled);
   const [loading, setLoading] = useState(false);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -134,8 +148,63 @@ setMessage({ type: 'success', text: t('auth.confirmEmail') });
   </div>
 
   <p className="text-slate-600 text-center text-sm sm:text-base mb-6 leading-relaxed">
-    {isSignUp ? t('auth.taglineSignUp') : t('auth.taglineSignIn')}
+    {authCoreEnabled && !showLocalAuth
+      ? t('auth.taglineAuthCore')
+      : isSignUp
+        ? t('auth.taglineSignUp')
+        : t('auth.taglineSignIn')}
   </p>
+
+        {authCoreEnabled && !showLocalAuth ? (
+          <div className="space-y-3">
+            <button
+              type="button"
+              onClick={() => {
+                window.location.href = getAuthLoginUrl(resolveSsoReturnTo());
+              }}
+              className="w-full py-3 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-xl transition-all"
+            >
+              {t('auth.signInWithAuthCore')}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                window.location.href = getAuthRegisterUrl(resolveSsoReturnTo());
+              }}
+              className="w-full py-3 border border-slate-300 bg-white hover:bg-slate-50 hover:border-slate-400 text-slate-800 font-semibold rounded-xl transition-all"
+            >
+              {t('auth.signUpWithAuthCore')}
+            </button>
+            <div className="text-center">
+              <a
+                href={getAuthForgotPasswordUrl()}
+                className="text-sm font-medium text-blue-600 hover:text-blue-700"
+              >
+                {t('auth.forgotPassword')}
+              </a>
+            </div>
+            <button
+              type="button"
+              onClick={() => setShowLocalAuth(true)}
+              className="w-full pt-2 text-sm text-slate-500 hover:text-slate-700 underline-offset-2 hover:underline"
+            >
+              {t('auth.useLocalAuth')}
+            </button>
+          </div>
+        ) : (
+        <>
+        {authCoreEnabled && (
+          <button
+            type="button"
+            onClick={() => {
+              setShowLocalAuth(false);
+              setMessage(null);
+            }}
+            className="mb-4 w-full text-sm text-blue-600 hover:text-blue-700 font-medium"
+          >
+            {t('auth.backToAuthCore')}
+          </button>
+        )}
 
         <form onSubmit={handleAuth} className="space-y-4">
         {isSignUp && (
@@ -231,13 +300,22 @@ setMessage({ type: 'success', text: t('auth.confirmEmail') });
                 />
                 {t('auth.rememberMe')}
               </label>
-              <button
-                type="button"
-                className="text-sm font-medium text-blue-600 hover:text-blue-700"
-                onClick={() => setMessage({ type: 'error', text: t('auth.forgotPasswordHint') })}
-              >
-                {t('auth.forgotPassword')}
-              </button>
+              {authCoreEnabled ? (
+                <a
+                  href={getAuthForgotPasswordUrl()}
+                  className="text-sm font-medium text-blue-600 hover:text-blue-700"
+                >
+                  {t('auth.forgotPassword')}
+                </a>
+              ) : (
+                <button
+                  type="button"
+                  className="text-sm font-medium text-blue-600 hover:text-blue-700"
+                  onClick={() => setMessage({ type: 'error', text: t('auth.forgotPasswordHint') })}
+                >
+                  {t('auth.forgotPassword')}
+                </button>
+              )}
             </div>
           )}
 
@@ -280,6 +358,8 @@ setMessage({ type: 'success', text: t('auth.confirmEmail') });
             {t('auth.trustHint')}
           </div>
         </div>
+        </>
+        )}
         </motion.div>
       </div>
     </div>

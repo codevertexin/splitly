@@ -505,3 +505,15 @@ enabled = true
 verify_jwt = true
 import_map = "./functions/update-expense-v2/deno.json"
 entrypoint = "./functions/update-expense-v2/index.ts"
+
+[functions.sso-complete-poc]
+enabled = true
+verify_jwt = false
+import_map = "./functions/sso-complete-poc/deno.json"
+entrypoint = "./functions/sso-complete-poc/index.ts"
+
+[functions.sso-complete]
+enabled = true
+verify_jwt = false
+import_map = "./functions/sso-complete/deno.json"
+entrypoint = "./functions/sso-complete/index.ts"

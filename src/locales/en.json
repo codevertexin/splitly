@@ -43,7 +43,23 @@
     "username": "Username",
     "usernamePlaceholder": "e.g., ricardo.matias",
     "usernameTooShort": "The username must be at least 3 characters long.",
-  "usernameInvalid": "Use only lowercase letters, numbers, periods, or underscores."
+  "usernameInvalid": "Use only lowercase letters, numbers, periods, or underscores.",
+    "taglineAuthCore": "Sign in with your CodeVertex account",
+    "signInWithAuthCore": "Continue with Auth Core",
+    "signUpWithAuthCore": "Create account on Auth Core",
+    "useLocalAuth": "Use email and password on Splitly",
+    "backToAuthCore": "Back to Auth Core sign-in"
+  },
+  "sso": {
+    "callback": {
+      "signingIn": "Completing sign-in…",
+      "errorTitle": "Sign-in could not be completed",
+      "backToLogin": "Back to login",
+      "missingTicket": "Missing SSO ticket. Start sign-in again from the login page.",
+      "invalidApp": "This sign-in link is not for Splitly (app={{app}}).",
+      "disabled": "Auth Core sign-in is not enabled on this deployment.",
+      "genericError": "Something went wrong completing sign-in. Try again."
+    }
   },
   "layout": {
     "nav": {
@@ -79,7 +95,58 @@
     "mainNav": "Main",
     "loggedInAs": "Logged in as",
     "accountMenu": "Account menu",
-    "help": "Help"
+    "help": "Help",
+    "supportAndHelp": "Support & Help"
+  },
+  "legal": {
+    "footerNav": "Legal and privacy",
+    "links": {
+      "privacy": "Privacy",
+      "terms": "Terms",
+      "cookies": "Cookies",
+      "gdpr": "GDPR",
+      "deleteData": "Delete data",
+      "contact": "Contact"
+    },
+    "notFoundTitle": "Page not found",
+    "notFoundBody": "This legal page does not exist.",
+    "pages": {
+      "privacy": {
+        "title": "Privacy policy",
+        "subtitle": "How we handle your personal data in Splitly.",
+        "body": "We collect only what is needed to run shared expenses: account details, group membership, and expense data you enter. Data is stored securely and is visible only to members of your groups, according to the permissions in the app."
+      },
+      "terms": {
+        "title": "Terms of use",
+        "subtitle": "Rules for using Splitly.",
+        "body": "By using Splitly you agree to use the service lawfully and to keep your login credentials secure. The app helps track shared expenses; recorded settlements reflect what you confirm — always verify real-world payments between people."
+      },
+      "cookies": {
+        "title": "Cookies",
+        "subtitle": "Cookies and similar technologies.",
+        "body": "We use essential cookies and local storage to keep you signed in and remember preferences (such as language). We do not use third-party advertising cookies."
+      },
+      "gdpr": {
+        "title": "GDPR",
+        "subtitle": "Your rights under EU data protection law.",
+        "body": "If you are in the European Economic Area, you may request access, correction, portability, or deletion of your personal data, and object to certain processing.",
+        "point1": "Contact us using the Contact link below for any request.",
+        "point2": "You may also delete your account data from Settings where available.",
+        "point3": "We respond to verified requests within the timeframes required by law."
+      },
+      "deleteData": {
+        "title": "Delete your data",
+        "subtitle": "How to remove your information from Splitly.",
+        "body": "You can sign out at any time. To remove your account and associated personal data, contact us or use account options in Settings when available.",
+        "settingsLink": "Open Settings"
+      },
+      "contact": {
+        "title": "Contact",
+        "subtitle": "Questions, support, or privacy requests.",
+        "body": "For help using Splitly, open Support & Help in the app. For privacy or data requests, email our team at the address shown in your organisation’s documentation or product website.",
+        "helpLink": "Go to Support & Help"
+      }
+    }
   },
   "common": {
     "cancel": "Cancel"

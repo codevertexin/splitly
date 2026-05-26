@@ -16,9 +16,11 @@ import { ContactsPage } from './features/contacts/ContactsPage';
 import { PeopleDetailPage } from './features/people/PeopleDetailPage';
 import { ReportsPage } from './features/reports/ReportsPage';
 import { HelpPage } from './pages/HelpPage';
+import { LegalPage } from './pages/LegalPage';
 import { Session } from '@supabase/supabase-js';
 import { Loader2, AlertCircle, ExternalLink } from 'lucide-react';
 import { InviteEntryPage } from './features/groups/InviteEntryPage';
+import { SsoCallbackPage } from './pages/SsoCallbackPage';
 import { BrandLogo } from './components/BrandLogo';
 import { AppInviteRefCapture } from './components/AppInviteRefCapture';
 import { clearStoredAppInviteRef, getStoredAppInviteRef } from './lib/appInviteRef';
@@ -155,6 +157,7 @@ export default function App() {
       <AppInviteRefCapture />
       <div className="min-h-screen bg-slate-50 font-sans text-slate-900">
         <Routes>
+          <Route path="/sso/callback" element={<SsoCallbackPage />} />
           <Route path="/invite/:token" element={<InviteEntryPage session={session} />} />
           {!session ? (
             <Route path="*" element={<Auth />} />
@@ -173,6 +176,7 @@ export default function App() {
               <Route path="events/:id" element={<EventDetailPage session={session} />} />
               <Route path="settings" element={<SettingsPage session={session} />} />
               <Route path="help" element={<HelpPage />} />
+              <Route path="legal/:topic" element={<LegalPage />} />
               <Route path="*" element={<Navigate to="/dashboard" replace />} />
             </Route>
           )}
