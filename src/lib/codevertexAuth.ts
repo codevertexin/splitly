@@ -77,6 +77,20 @@ export function getAuthForgotPasswordUrl(): string {
 }
 
 /**
+ * Auth Core account profile (global identity). Returns to Splitly after editing.
+ * Example: `…/account/profile?app=SPLITLY&return_to=https://splitly…/settings`
+ */
+export function getAuthProfileManageUrl(returnPath = '/settings'): string {
+  const returnTo =
+    typeof window !== 'undefined'
+      ? `${stripTrailingSlash(window.location.origin)}${returnPath.startsWith('/') ? returnPath : `/${returnPath}`}`
+      : returnPath;
+  return buildAuthCoreUrl('/account/profile', {
+    return_to: returnTo,
+  });
+}
+
+/**
  * Auth Core logout — clears central session, then redirects to `return_to` (Splitly origin).
  * Example: `…/logout?app=SPLITLY&return_to=https://splitly.codevertex.cc`
  */
