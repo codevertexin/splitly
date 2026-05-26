@@ -4,11 +4,12 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { AlertCircle, Loader2 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { APP_CODE } from '../lib/codevertexConfig';
+import { getAuthLoginUrl } from '../lib/codevertexAuth';
 import {
   clearStoredSsoReturnTo,
-  getStoredSsoReturnTo,
+  DEFAULT_SSO_RETURN,
+  resolveSafePostSsoDestination,
 } from '../lib/ssoReturnTo';
-import { getPendingGroupInviteToken } from '../lib/groupInviteToken';
 import { BrandLogo } from '../components/BrandLogo';
 
 type SsoCompleteSuccess = {
@@ -72,12 +73,12 @@ async function resolveSsoCompletePayload(
   return null;
 }
 
-function resolvePostLoginPath(): string {
-  const pendingInvite = getPendingGroupInviteToken();
-  if (pendingInvite) {
-    return `/invite/${encodeURIComponent(pendingInvite)}`;
-  }
-  return getStoredSsoReturnTo();
+function logSsoCallback(resolvedReturnTo: string): void {
+  console.log('[SSO callback]', {
+    pathname: window.location.pathname,
+    search: window.location.search,
+    resolvedReturnTo,
+  });
 }
 
 export function SsoCallbackPage() {
@@ -87,12 +88,20 @@ export function SsoCallbackPage() {
   const [error, setError] = useState<string | null>(null);
   const startedRef = useRef(false);
 
+  const navigateSafe = (resolvedReturnTo: string) => {
+    logSsoCallback(resolvedReturnTo);
+    navigate(resolvedReturnTo, { replace: true });
+  };
+
   useEffect(() => {
     if (startedRef.current) return;
     startedRef.current = true;
 
     const ticket = searchParams.get('ticket')?.trim();
     const app = searchParams.get('app')?.trim().toUpperCase();
+    const resolvedReturnTo = resolveSafePostSsoDestination();
+
+    logSsoCallback(resolvedReturnTo);
 
     if (!ticket) {
       setError(t('sso.callback.missingTicket'));
@@ -106,7 +115,7 @@ export function SsoCallbackPage() {
 
     if (wasTicketConsumed(ticket)) {
       clearStoredSsoReturnTo();
-      navigate(resolvePostLoginPath(), { replace: true });
+      navigateSafe(resolvedReturnTo);
       return;
     }
 
@@ -139,14 +148,19 @@ export function SsoCallbackPage() {
         }
 
         markTicketConsumed(ticket);
-        const destination = resolvePostLoginPath();
+        const destination = resolveSafePostSsoDestination();
         clearStoredSsoReturnTo();
-        navigate(destination, { replace: true });
+        navigateSafe(destination);
       } catch (err) {
         setError(err instanceof Error ? err.message : t('sso.callback.genericError'));
       }
     })();
   }, [navigate, searchParams, t]);
+
+  const handleBackToLogin = () => {
+    clearStoredSsoReturnTo();
+    window.location.replace(getAuthLoginUrl(DEFAULT_SSO_RETURN));
+  };
 
   return (
     <div className="flex min-h-screen flex-col items-center justify-center bg-slate-50 px-4 py-10">
@@ -158,7 +172,7 @@ export function SsoCallbackPage() {
           <p className="mt-2 text-sm text-slate-600">{error}</p>
           <button
             type="button"
-            onClick={() => navigate('/', { replace: true })}
+            onClick={handleBackToLogin}
             className="mt-6 rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-blue-700"
           >
             {t('sso.callback.backToLogin')}

@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { supabase, isSupabaseConfigured } from './lib/supabase';
 import { applyPreferredLanguageFromProfile } from './hooks/useUserProfile';
 import { Auth } from './components/Auth';
@@ -29,6 +29,27 @@ import {
   clearPendingGroupInviteToken,
   getPendingGroupInviteToken,
 } from './lib/groupInviteToken';
+
+/** Legacy Auth Core paths that omitted `/sso` — preserve query (ticket, app). */
+function LegacySsoCallbackRedirect() {
+  const { search, hash } = useLocation();
+  return <Navigate to={`/sso/callback${search}${hash}`} replace />;
+}
+
+function isSsoCallbackLocation(): boolean {
+  if (typeof window === 'undefined') return false;
+  const path = window.location.pathname.replace(/\/+$/, '') || '/';
+  return path === '/sso/callback' || path === '/callback';
+}
+
+function PublicSsoRoutes() {
+  return (
+    <Routes>
+      <Route path="/callback" element={<LegacySsoCallbackRedirect />} />
+      <Route path="/sso/callback" element={<SsoCallbackPage />} />
+    </Routes>
+  );
+}
 
 export default function App() {
   const { t } = useTranslation();
@@ -106,6 +127,14 @@ export default function App() {
     }
   }, [session?.user?.id]);
 
+  if (loading && isSsoCallbackLocation()) {
+    return (
+      <BrowserRouter>
+        <PublicSsoRoutes />
+      </BrowserRouter>
+    );
+  }
+
   if (loading) {
     return (
       <div className="flex items-center justify-center min-h-screen bg-white">
@@ -158,6 +187,7 @@ export default function App() {
       <AppInviteRefCapture />
       <div className="min-h-screen bg-slate-50 font-sans text-slate-900">
         <Routes>
+          <Route path="/callback" element={<LegacySsoCallbackRedirect />} />
           <Route path="/sso/callback" element={<SsoCallbackPage />} />
           {import.meta.env.DEV && (
             <Route path="/dev-login" element={<DevLoginPage />} />
