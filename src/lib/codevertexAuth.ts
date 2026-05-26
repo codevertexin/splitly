@@ -43,9 +43,27 @@ function loginOrRegisterUrl(path: '/auth/login' | '/auth/register'): string {
   return buildAuthCoreUrl(path, { return_url: returnUrl });
 }
 
+export type AuthLoginOptions = {
+  /** Post-SSO in-app path (stored locally, not sent as Auth Core return_url). */
+  returnTo?: string;
+  /**
+   * Reserved for Auth Core account picker. Not sent until documented by Auth Core
+   * (no `prompt=login` / `force_login` in current contract — use logout to switch accounts).
+   */
+  forceLogin?: boolean;
+};
+
+function resolveLoginOptions(returnToOrOptions?: string | AuthLoginOptions): AuthLoginOptions {
+  if (typeof returnToOrOptions === 'string') {
+    return { returnTo: returnToOrOptions };
+  }
+  return returnToOrOptions ?? {};
+}
+
 /** Auth Core login. `returnTo` is stored for post-callback navigation (not sent as `return_url`). */
-export function getAuthLoginUrl(returnTo?: string): string {
-  if (returnTo) storeSsoReturnTo(returnTo);
+export function getAuthLoginUrl(returnToOrOptions?: string | AuthLoginOptions): string {
+  const options = resolveLoginOptions(returnToOrOptions);
+  if (options.returnTo) storeSsoReturnTo(options.returnTo);
   return loginOrRegisterUrl('/auth/login');
 }
 
@@ -58,11 +76,15 @@ export function getAuthForgotPasswordUrl(): string {
   return buildAuthCoreUrl('/auth/forgot-password', {});
 }
 
-/** Auth Core logout; `returnTo` defaults to current origin. */
+/**
+ * Auth Core logout — clears central session, then redirects to `return_to` (Splitly origin).
+ * Example: `…/logout?app=SPLITLY&return_to=https://splitly.codevertex.cc`
+ */
 export function getAuthLogoutUrl(returnTo?: string): string {
-  const target =
+  const raw =
     returnTo ??
     (typeof window !== 'undefined' ? window.location.origin : '');
+  const target = stripTrailingSlash(raw);
   return buildAuthCoreUrl('/logout', {
     return_to: target,
   });

@@ -78,10 +78,38 @@ function isNonEmptyString(value: unknown): value is string {
   return typeof value === "string" && value.trim().length > 0;
 }
 
+/** Non-empty email from Auth Core (not placeholder). Required for email-based linking. */
+function getCoreEmailForLinking(profile: CoreProfile): string | null {
+  const raw = profile.email?.trim();
+  if (!raw) return null;
+  return raw;
+}
+
 function resolveEmail(profile: CoreProfile, codevertexUserId: string): string {
   const fromCore = profile.email?.trim();
   if (fromCore) return fromCore;
   return `${codevertexUserId}@${SSO_PLACEHOLDER_EMAIL_DOMAIN}`;
+}
+
+/** Exact identity for Auth Core vs local auth email (trim + lowercase). */
+function emailsMatchForLinking(coreEmail: string, localEmail: string | undefined): boolean {
+  if (!localEmail) return false;
+  return coreEmail.trim().toLowerCase() === localEmail.trim().toLowerCase();
+}
+
+function isDuplicateEmailCreateUserError(err: unknown): boolean {
+  if (!err || typeof err !== "object") return false;
+  const e = err as { message?: string; status?: number; code?: string };
+  const msg = (e.message ?? "").toLowerCase();
+  const code = (e.code ?? "").toLowerCase();
+  return (
+    e.status === 422 ||
+    code === "email_exists" ||
+    msg.includes("already been registered") ||
+    msg.includes("already registered") ||
+    msg.includes("user already registered") ||
+    msg.includes("email address is already")
+  );
 }
 
 function listMemberships(payload: ConsumeTicketResponse): AppMembership[] {
@@ -171,6 +199,44 @@ function buildNonDestructiveProfilePatch(
   }
 
   return patch;
+}
+
+/**
+ * List auth user ids whose email matches Core email (trim + lowercase).
+ * Stops scanning after 2 matches (ambiguous). Max pages bounded for safety.
+ */
+async function findAuthUserIdsByEmail(
+  admin: SupabaseClient,
+  coreEmailForCompare: string,
+): Promise<{ ids: string[]; error?: PocErrorBody }> {
+  const target = coreEmailForCompare.trim().toLowerCase();
+  const ids: string[] = [];
+  let page = 1;
+  const perPage = 1000;
+  const maxPages = 100;
+
+  while (page <= maxPages) {
+    const { data, error } = await admin.auth.admin.listUsers({ page, perPage });
+    if (error) {
+      return {
+        ids: [],
+        error: {
+          ok: false,
+          step: "list_auth_users",
+          code: "admin_list_failed",
+          message: error.message,
+        },
+      };
+    }
+    for (const u of data.users) {
+      const em = u.email;
+      if (em && em.trim().toLowerCase() === target) ids.push(u.id);
+      if (ids.length > 1) return { ids };
+    }
+    if (data.users.length < perPage) break;
+    page++;
+  }
+  return { ids };
 }
 
 async function consumeSsoTicket(
@@ -307,6 +373,179 @@ async function createSessionViaMagicLink(
   };
 }
 
+/**
+ * Link pre-SSO local auth user (same email, codevertex_user_id NULL) to this Core identity.
+ */
+async function linkExistingLocalUser(
+  admin: SupabaseClient,
+  coreProfile: CoreProfile,
+  codevertexUserId: string,
+): Promise<{ localUserId: string } | { error: PocErrorBody }> {
+  const coreEmailRaw = getCoreEmailForLinking(coreProfile);
+  if (!coreEmailRaw) {
+    return {
+      error: {
+        ok: false,
+        step: "link_existing_local_user",
+        code: "link_requires_core_email",
+        message: "Cannot link by email: Auth Core profile has no email",
+      },
+    };
+  }
+
+  const { ids: matchingAuthIds, error: listErr } = await findAuthUserIdsByEmail(
+    admin,
+    coreEmailRaw,
+  );
+  if (listErr) return { error: listErr };
+
+  if (matchingAuthIds.length === 0) {
+    return {
+      error: {
+        ok: false,
+        step: "link_existing_local_user",
+        code: "link_no_local_auth_user",
+        message: "No local auth user found for this email after duplicate registration error",
+      },
+    };
+  }
+
+  if (matchingAuthIds.length > 1) {
+    return {
+      error: {
+        ok: false,
+        step: "link_existing_local_user",
+        code: "ambiguous_local_account_linking",
+        message: "Multiple local auth users share this email; cannot link safely",
+      },
+    };
+  }
+
+  const localUserId = matchingAuthIds[0]!;
+
+  const { data: authUserData, error: getUserErr } = await admin.auth.admin.getUserById(
+    localUserId,
+  );
+  if (getUserErr || !authUserData?.user) {
+    return {
+      error: {
+        ok: false,
+        step: "link_existing_local_user",
+        code: "local_auth_user_not_found",
+        message: getUserErr?.message ?? "auth.admin.getUserById returned no user",
+      },
+    };
+  }
+
+  const localAuthEmail = authUserData.user.email;
+  if (!emailsMatchForLinking(coreEmailRaw, localAuthEmail)) {
+    return {
+      error: {
+        ok: false,
+        step: "link_existing_local_user",
+        code: "email_mismatch",
+        message: "Local auth email does not match Auth Core email",
+      },
+    };
+  }
+
+  const { data: localProfile, error: profileErr } = await admin
+    .from("profiles")
+    .select(
+      "id, codevertex_user_id, username, full_name, avatar_url, preferred_language, timezone, default_currency",
+    )
+    .eq("id", localUserId)
+    .maybeSingle();
+
+  if (profileErr) {
+    return {
+      error: {
+        ok: false,
+        step: "link_existing_local_user",
+        code: "db_error",
+        message: profileErr.message,
+      },
+    };
+  }
+
+  if (!localProfile) {
+    return {
+      error: {
+        ok: false,
+        step: "link_existing_local_user",
+        code: "link_missing_profile",
+        message: "No profiles row for local auth user",
+      },
+    };
+  }
+
+  const row = localProfile as LocalProfileRow;
+  const existingCv = row.codevertex_user_id?.trim() ?? null;
+
+  if (existingCv && existingCv !== codevertexUserId) {
+    return {
+      error: {
+        ok: false,
+        step: "link_existing_local_user",
+        code: "account_already_linked_to_different_codevertex_user",
+        message: "This Splitly profile is already linked to another CodeVertex user",
+      },
+    };
+  }
+
+  if (existingCv === codevertexUserId) {
+    const patch = buildNonDestructiveProfilePatch(row, coreProfile);
+    if (Object.keys(patch).length > 0) {
+      const { error: syncErr } = await admin.from("profiles").update(patch).eq("id", localUserId);
+      if (syncErr) {
+        return {
+          error: {
+            ok: false,
+            step: "link_existing_local_user",
+            code: "db_error",
+            message: syncErr.message,
+          },
+        };
+      }
+    }
+    console.log(
+      JSON.stringify({
+        step: "link_existing_local_user",
+        mode: "already_linked_same_codevertex",
+        local_user_id: localUserId,
+        codevertex_user_id: codevertexUserId,
+      }),
+    );
+    return { localUserId };
+  }
+
+  const patch = buildNonDestructiveProfilePatch(row, coreProfile);
+  patch.codevertex_user_id = codevertexUserId;
+
+  const { error: updateErr } = await admin.from("profiles").update(patch).eq("id", localUserId);
+  if (updateErr) {
+    return {
+      error: {
+        ok: false,
+        step: "link_existing_local_user",
+        code: "db_error",
+        message: updateErr.message,
+      },
+    };
+  }
+
+  console.log(
+    JSON.stringify({
+      step: "link_existing_local_user",
+      mode: "linked_null_codevertex",
+      local_user_id: localUserId,
+      codevertex_user_id: codevertexUserId,
+    }),
+  );
+
+  return { localUserId };
+}
+
 serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
@@ -415,23 +654,39 @@ serve(async (req) => {
       user_metadata: buildUserMetadata(coreProfile, codevertexUserId),
     });
 
-    if (createUserError || !createdUser.user) {
-      return fail(
-        "create_auth_user",
-        "create_user_failed",
-        createUserError?.message ?? "auth.admin.createUser returned no user",
-        500,
-      );
-    }
+    if (createUserError || !createdUser?.user) {
+      if (
+        createUserError &&
+        isDuplicateEmailCreateUserError(createUserError) &&
+        getCoreEmailForLinking(coreProfile)
+      ) {
+        const linkResult = await linkExistingLocalUser(
+          admin,
+          coreProfile,
+          codevertexUserId,
+        );
+        if ("error" in linkResult) {
+          return jsonResponse(linkResult.error, 409);
+        }
+        localUserId = linkResult.localUserId;
+      } else {
+        return fail(
+          "create_auth_user",
+          "create_user_failed",
+          createUserError?.message ?? "auth.admin.createUser returned no user",
+          500,
+        );
+      }
+    } else {
+      localUserId = createdUser.user.id;
 
-    localUserId = createdUser.user.id;
+      const { error: insertProfileError } = await admin
+        .from("profiles")
+        .insert(buildProfileInsert(localUserId, codevertexUserId, coreProfile));
 
-    const { error: insertProfileError } = await admin
-      .from("profiles")
-      .insert(buildProfileInsert(localUserId, codevertexUserId, coreProfile));
-
-    if (insertProfileError) {
-      return fail("create_profile", "db_error", insertProfileError.message, 500);
+      if (insertProfileError) {
+        return fail("create_profile", "db_error", insertProfileError.message, 500);
+      }
     }
   }
 

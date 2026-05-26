@@ -58,6 +58,8 @@
       "signingIn": "Completing sign-in…",
       "errorTitle": "Sign-in could not be completed",
       "backToLogin": "Back to login",
+      "signOutAndRetry": "Sign out and try again",
+      "createCodevertexAccount": "Create CodeVertex account",
       "missingTicket": "Missing SSO ticket. Start sign-in again from the login page.",
       "invalidApp": "This sign-in link is not for Splitly (app={{app}}).",
       "disabled": "Auth Core sign-in is not enabled on this deployment.",

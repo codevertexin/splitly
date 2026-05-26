@@ -58,6 +58,8 @@
       "signingIn": "A concluir o início de sessão…",
       "errorTitle": "Não foi possível concluir o início de sessão",
       "backToLogin": "Voltar ao login",
+      "signOutAndRetry": "Sair e tentar novamente",
+      "createCodevertexAccount": "Criar conta CodeVertex",
       "missingTicket": "Ticket SSO em falta. Volta a iniciar sessão na página de login.",
       "invalidApp": "Esta ligação não é para a Splitly (app={{app}}).",
       "disabled": "O início de sessão Auth Core não está ativo neste ambiente.",

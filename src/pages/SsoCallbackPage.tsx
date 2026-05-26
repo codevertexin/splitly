@@ -4,7 +4,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { AlertCircle, Loader2 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { APP_CODE } from '../lib/codevertexConfig';
-import { getAuthLoginUrl } from '../lib/codevertexAuth';
+import { getAuthLogoutUrl, getAuthRegisterUrl } from '../lib/codevertexAuth';
 import {
   clearStoredSsoReturnTo,
   DEFAULT_SSO_RETURN,
@@ -48,6 +48,19 @@ function wasTicketConsumed(ticket: string): boolean {
 function markTicketConsumed(ticket: string): void {
   try {
     sessionStorage.setItem(ticketDoneKey(ticket), '1');
+  } catch {
+    /* ignore */
+  }
+}
+
+function clearConsumedTicketMarkers(): void {
+  try {
+    const keys: string[] = [];
+    for (let i = 0; i < sessionStorage.length; i++) {
+      const key = sessionStorage.key(i);
+      if (key?.startsWith(TICKET_DONE_PREFIX)) keys.push(key);
+    }
+    keys.forEach((key) => sessionStorage.removeItem(key));
   } catch {
     /* ignore */
   }
@@ -157,9 +170,16 @@ export function SsoCallbackPage() {
     })();
   }, [navigate, searchParams, t]);
 
-  const handleBackToLogin = () => {
+  const handleSignOutAndRetry = async () => {
     clearStoredSsoReturnTo();
-    window.location.replace(getAuthLoginUrl(DEFAULT_SSO_RETURN));
+    clearConsumedTicketMarkers();
+    await supabase.auth.signOut();
+    window.location.replace(getAuthLogoutUrl(window.location.origin));
+  };
+
+  const handleCreateCodevertexAccount = () => {
+    clearStoredSsoReturnTo();
+    window.location.href = getAuthRegisterUrl(DEFAULT_SSO_RETURN);
   };
 
   return (
@@ -170,13 +190,22 @@ export function SsoCallbackPage() {
           <AlertCircle className="mx-auto mb-3 h-10 w-10 text-red-500" />
           <h1 className="text-lg font-semibold text-slate-900">{t('sso.callback.errorTitle')}</h1>
           <p className="mt-2 text-sm text-slate-600">{error}</p>
-          <button
-            type="button"
-            onClick={handleBackToLogin}
-            className="mt-6 rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-blue-700"
-          >
-            {t('sso.callback.backToLogin')}
-          </button>
+          <div className="mt-6 flex flex-col gap-3">
+            <button
+              type="button"
+              onClick={() => void handleSignOutAndRetry()}
+              className="w-full rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-blue-700"
+            >
+              {t('sso.callback.signOutAndRetry')}
+            </button>
+            <button
+              type="button"
+              onClick={handleCreateCodevertexAccount}
+              className="w-full rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-800 hover:bg-slate-50"
+            >
+              {t('sso.callback.createCodevertexAccount')}
+            </button>
+          </div>
         </div>
       ) : (
         <div className="flex flex-col items-center gap-3 text-slate-600">
