@@ -152,6 +152,8 @@ npm run build → ver relatório no PR/commit
 
 ## Checklist produção pendente
 
+Ver também: [CODEVERTEX_RELEASE_BLOCKERS.md](./CODEVERTEX_RELEASE_BLOCKERS.md) (nota interna / tracking).
+
 - [ ] Billing Core: contrato `/api/v1/entitlements` validado em staging
 - [ ] Billing Core: `BILLING_SERVICE_TOKEN` confirmado (sim/não) e configurado
 - [ ] Billing Core: política de timeout/fallback acordada (fail-open vs fail-closed)
