@@ -1,17 +1,12 @@
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
+import { corsHeadersForRequest, preflightResponse } from "../_shared/cors.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
-  "Access-Control-Allow-Methods": "POST, OPTIONS",
-};
-
-function jsonResponse(body: unknown, status = 200) {
+function jsonResponse(req: Request, body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
     headers: {
-      ...corsHeaders,
+      ...corsHeadersForRequest(req),
       "Content-Type": "application/json",
     },
   });
@@ -20,16 +15,16 @@ function jsonResponse(body: unknown, status = 200) {
 serve(async (req) => {
   try {
     if (req.method === "OPTIONS") {
-      return new Response("ok", { headers: corsHeaders });
+      return preflightResponse(req);
     }
 
     if (req.method !== "POST") {
-      return jsonResponse({ error: "Method not allowed", code: "method_not_allowed" }, 405);
+      return jsonResponse(req, { error: "Method not allowed", code: "method_not_allowed" }, 405);
     }
 
     const authHeader = req.headers.get("Authorization");
     if (!authHeader) {
-      return jsonResponse({ error: "Missing auth", code: "missing_auth" }, 401);
+      return jsonResponse(req, { error: "Missing auth", code: "missing_auth" }, 401);
     }
 
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
@@ -43,19 +38,19 @@ serve(async (req) => {
     const { data: { user } } = await userClient.auth.getUser();
 
     if (!user) {
-      return jsonResponse({ error: "Unauthorized", code: "unauthorized" }, 401);
+      return jsonResponse(req, { error: "Unauthorized", code: "unauthorized" }, 401);
     }
 
     let body: { token?: string };
     try {
       body = await req.json();
     } catch {
-      return jsonResponse({ error: "Invalid JSON body", code: "invalid_body" }, 400);
+      return jsonResponse(req, { error: "Invalid JSON body", code: "invalid_body" }, 400);
     }
 
     const token = typeof body?.token === "string" ? body.token.trim() : "";
     if (!token) {
-      return jsonResponse({ error: "Missing token", code: "missing_token" }, 400);
+      return jsonResponse(req, { error: "Missing token", code: "missing_token" }, 400);
     }
 
     const admin = createClient(supabaseUrl, serviceKey);
@@ -68,11 +63,11 @@ serve(async (req) => {
 
     if (inviteError) {
       console.error("accept-invite lookup:", inviteError);
-      return jsonResponse({ error: "Could not validate invite", code: "lookup_failed" }, 500);
+      return jsonResponse(req, { error: "Could not validate invite", code: "lookup_failed" }, 500);
     }
 
     if (!invite) {
-      return jsonResponse({ error: "Invalid or unknown invite link", code: "invalid_invite" }, 404);
+      return jsonResponse(req, { error: "Invalid or unknown invite link", code: "invalid_invite" }, 404);
     }
 
     const { data: existingMember } = await admin
@@ -120,7 +115,7 @@ serve(async (req) => {
     if (existingMember) {
       await markAccepted();
       await syncContacts();
-      return jsonResponse({
+      return jsonResponse(req, {
         success: true,
         group_id: invite.group_id,
         status: "already_member",
@@ -128,11 +123,11 @@ serve(async (req) => {
     }
 
     if (invite.status === "pending" && new Date(invite.expires_at) < new Date()) {
-      return jsonResponse({ error: "This invite has expired", code: "invite_expired" }, 400);
+      return jsonResponse(req, { error: "This invite has expired", code: "invite_expired" }, 400);
     }
 
     if (invite.status !== "pending") {
-      return jsonResponse({ error: "This invite link is no longer valid", code: "invite_used" }, 400);
+      return jsonResponse(req, { error: "This invite link is no longer valid", code: "invite_used" }, 400);
     }
 
     const { error: insertError } = await admin.from("group_members").insert({
@@ -147,27 +142,27 @@ serve(async (req) => {
       if (msg.includes("duplicate") || msg.includes("unique") || insertError.code === "23505") {
         await markAccepted();
         await syncContacts();
-        return jsonResponse({
+        return jsonResponse(req, {
           success: true,
           group_id: invite.group_id,
           status: "already_member",
         });
       }
       console.error("accept-invite insert:", insertError);
-      return jsonResponse({ error: "Could not join group", code: "join_failed", details: msg }, 500);
+      return jsonResponse(req, { error: "Could not join group", code: "join_failed", details: msg }, 500);
     }
 
     await markAccepted();
     await syncContacts();
 
-    return jsonResponse({
+    return jsonResponse(req, {
       success: true,
       group_id: invite.group_id,
       status: "joined",
     });
   } catch (err) {
     console.error("accept-invite:", err);
-    return jsonResponse({
+    return jsonResponse(req, {
       error: "Server error",
       code: "server_error",
       details: err instanceof Error ? err.message : String(err),

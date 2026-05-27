@@ -111,14 +111,18 @@ export function useGuardPremiumAction() {
     setCheckoutLoading(true);
     try {
       const returnPath = `${window.location.pathname}${window.location.search}`;
-      const result = await createCheckoutSession({ successReturnPath: returnPath, planId });
+      const result = await createCheckoutSession({
+        successReturnPath: returnPath,
+        planId,
+        featureKey: activeFeatureKey ?? undefined,
+      });
       if (result.ok) {
         window.location.assign(result.checkoutUrl);
       }
     } finally {
       setCheckoutLoading(false);
     }
-  }, []);
+  }, [activeFeatureKey]);
 
   /**
    * Call when the app detects a successful checkout return (`useCheckoutReturnEffect`).

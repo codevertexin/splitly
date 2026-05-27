@@ -1,16 +1,11 @@
 import { serve } from 'https://deno.land/std@0.224.0/http/server.ts';
+import { corsHeadersForRequest, preflightResponse } from "../_shared/cors.ts";
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
 import { createExpenseCanonical } from '../_shared/finance/engine/createExpenseCanonical.ts';
 import type { CreateExpenseCanonicalInput } from '../_shared/finance/types.ts';
 import { computeDebtsToPayer } from '../_shared/finance/engine/settlementAware.ts';
 import { getActiveBatchIdForGroup } from '../_shared/activeBatch.ts';
-
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
-  "Access-Control-Allow-Methods": "POST, OPTIONS",
-};
 
 type Json = Record<string, unknown>;
 
@@ -36,7 +31,7 @@ function json(data: Json, init: ResponseInit = {}) {
   return new Response(JSON.stringify(data), {
     ...init,
     headers: {
-      ...corsHeaders,
+      ...corsHeadersForRequest(req),
       "Content-Type": "application/json",
       ...(init.headers ?? {}),
     },
@@ -46,8 +41,8 @@ function json(data: Json, init: ResponseInit = {}) {
 serve(async (req) => {
   try {
     if (req.method === "OPTIONS") {
-  return new Response("ok", { headers: corsHeaders });
-}
+      return preflightResponse(req);
+    }
 
 if (req.method !== "POST") {
   return json({ error: "Method not allowed" }, { status: 405 });

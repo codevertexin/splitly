@@ -1,17 +1,12 @@
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
+import { corsHeadersForRequest, preflightResponse } from "../_shared/cors.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
-  "Access-Control-Allow-Methods": "POST, OPTIONS",
-};
-
-function jsonResponse(body: unknown, status = 200) {
+function jsonResponse(req: Request, body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
     headers: {
-      ...corsHeaders,
+      ...corsHeadersForRequest(req),
       "Content-Type": "application/json",
     },
   });
@@ -20,16 +15,16 @@ function jsonResponse(body: unknown, status = 200) {
 serve(async (req) => {
   try {
     if (req.method === "OPTIONS") {
-      return new Response("ok", { headers: corsHeaders });
+      return preflightResponse(req);
     }
 
     if (req.method !== "POST") {
-      return jsonResponse({ error: "Method not allowed" }, 405);
+      return jsonResponse(req, { error: "Method not allowed" }, 405);
     }
 
     const authHeader = req.headers.get("Authorization");
     if (!authHeader) {
-      return jsonResponse({ error: "Missing auth" }, 401);
+      return jsonResponse(req, { error: "Missing auth" }, 401);
     }
 
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
@@ -43,17 +38,17 @@ serve(async (req) => {
     const { data: { user } } = await userClient.auth.getUser();
 
     if (!user) {
-      return jsonResponse({ error: "Unauthorized" }, 401);
+      return jsonResponse(req, { error: "Unauthorized" }, 401);
     }
 
     const { inviter_id } = await req.json() as { inviter_id?: string };
 
     if (!inviter_id || typeof inviter_id !== "string") {
-      return jsonResponse({ error: "inviter_id required" }, 400);
+      return jsonResponse(req, { error: "inviter_id required" }, 400);
     }
 
     if (inviter_id === user.id) {
-      return jsonResponse({ error: "Invalid inviter" }, 400);
+      return jsonResponse(req, { error: "Invalid inviter" }, 400);
     }
 
     const admin = createClient(supabaseUrl, serviceKey);
@@ -65,7 +60,7 @@ serve(async (req) => {
       .maybeSingle();
 
     if (inviterErr || !inviterProfile) {
-      return jsonResponse({ error: "Inviter not found" }, 404);
+      return jsonResponse(req, { error: "Inviter not found" }, 404);
     }
 
     await admin.from("user_contacts").upsert(
@@ -91,9 +86,9 @@ serve(async (req) => {
       },
     );
 
-    return jsonResponse({ success: true });
+    return jsonResponse(req, { success: true });
   } catch (err) {
-    return jsonResponse({
+    return jsonResponse(req, {
       error: "Server error",
       details: err instanceof Error ? err.message : String(err),
     }, 500);

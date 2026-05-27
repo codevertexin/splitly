@@ -1,35 +1,38 @@
+import { supabase } from '../../../lib/supabase';
+import { getBillingCheckoutUrl } from '../../../lib/codevertexBilling';
 import {
   CHECKOUT_SUCCESS_QUERY_PARAM,
   PENDING_PREMIUM_ACTION_TTL_MS,
   PENDING_RESUME_FEATURE_AFTER_CHECKOUT_KEY,
-  SESSION_CHECKOUT_PREMIUM_KEY,
 } from '../constants/billing.constants';
 import type {
   BillingFeatureKey,
   BillingPlanId,
   CheckoutIntentResult,
-  FeatureAccessTier,
+  CodeVertexEntitlement,
   PendingPremiumActionPayload,
   SubscriptionStatusResult,
   SubscriptionTier,
 } from '../types/billing.types';
 
-const SESSION_CHECKOUT_TIER_KEY = 'splitly_checkout_subscription_tier_v1';
-
 /**
- * Subscription source — replace with Supabase/Stripe when wired.
- * Dev: `splitly_dev_subscription_tier` = free | pro | premium, or legacy `splitly_dev_premium` = "1" => premium.
+ * Dev-only: override entitlements via localStorage (never used in production builds).
+ * `splitly_dev_subscription_tier` = free | pro | premium
  */
 const DEV_SUBSCRIPTION_TIER_KEY = 'splitly_dev_subscription_tier';
 const LEGACY_PREMIUM_DEV_OVERRIDE_KEY = 'splitly_dev_premium';
 
+const TIER_ENTITLEMENT_KEYS: Record<SubscriptionTier, string[]> = {
+  free: [],
+  pro: ['splitly.tier.pro', 'tier_pro', 'pro'],
+  premium: ['splitly.tier.premium', 'tier_premium', 'premium'],
+};
+
 function readDevSubscriptionTierOverride(): SubscriptionTier | null {
-  if (typeof window === 'undefined') return null;
+  if (!import.meta.env.DEV || typeof window === 'undefined') return null;
   try {
     const v = window.localStorage.getItem(DEV_SUBSCRIPTION_TIER_KEY)?.trim().toLowerCase();
-    if (v === 'free' || v === 'pro' || v === 'premium') {
-      return v;
-    }
+    if (v === 'free' || v === 'pro' || v === 'premium') return v;
     if (window.localStorage.getItem(LEGACY_PREMIUM_DEV_OVERRIDE_KEY) === '1') {
       return 'premium';
     }
@@ -39,43 +42,36 @@ function readDevSubscriptionTierOverride(): SubscriptionTier | null {
   return null;
 }
 
-function readCheckoutSessionTier(): SubscriptionTier | null {
-  if (typeof window === 'undefined') return null;
-  try {
-    const legacy = sessionStorage.getItem(SESSION_CHECKOUT_PREMIUM_KEY);
-    if (legacy === '1') {
-      return 'premium';
-    }
-    const t = sessionStorage.getItem(SESSION_CHECKOUT_TIER_KEY)?.trim().toLowerCase();
-    if (t === 'pro' || t === 'premium') {
-      return t;
-    }
-  } catch {
-    // ignore
-  }
-  return null;
+function devEntitlementsForTier(tier: SubscriptionTier): CodeVertexEntitlement[] {
+  if (tier === 'free') return [];
+  return TIER_ENTITLEMENT_KEYS[tier].map((entitlement_key) => ({
+    entitlement_key,
+    active: true,
+  }));
 }
 
-/**
- * Call when checkout completes successfully (return URL or webhook handler).
- * Stub: persists tier from selected plan until tab ends.
- */
-export function markSubscriptionActiveAfterCheckout(planId?: BillingPlanId): void {
-  if (typeof window === 'undefined') return;
-  try {
-    sessionStorage.removeItem(SESSION_CHECKOUT_PREMIUM_KEY);
-    if (planId === 'free') {
-      sessionStorage.removeItem(SESSION_CHECKOUT_TIER_KEY);
-      return;
-    }
-    if (planId === 'pro' || planId === 'premium') {
-      sessionStorage.setItem(SESSION_CHECKOUT_TIER_KEY, planId);
-      return;
-    }
-    sessionStorage.setItem(SESSION_CHECKOUT_TIER_KEY, 'premium');
-  } catch {
-    // ignore
-  }
+function inferTierFromEntitlements(entitlements: CodeVertexEntitlement[]): SubscriptionTier {
+  const activeKeys = new Set(
+    entitlements.filter((e) => e.active).map((e) => e.entitlement_key.toLowerCase()),
+  );
+  const has = (keys: string[]) => keys.some((k) => activeKeys.has(k.toLowerCase()));
+  if (has(TIER_ENTITLEMENT_KEYS.premium)) return 'premium';
+  if (has(TIER_ENTITLEMENT_KEYS.pro)) return 'pro';
+  return 'free';
+}
+
+export function hasActiveEntitlement(
+  entitlements: CodeVertexEntitlement[],
+  entitlementKey: string,
+): boolean {
+  const key = entitlementKey.trim().toLowerCase();
+  const alt = key.startsWith('splitly.') ? key.slice('splitly.'.length) : `splitly.${key}`;
+  return entitlements.some(
+    (e) =>
+      e.active &&
+      (e.entitlement_key.toLowerCase() === key ||
+        e.entitlement_key.toLowerCase() === alt),
+  );
 }
 
 interface PendingResumePayload {
@@ -130,25 +126,33 @@ export function clearPendingResumeFeatureAfterCheckout(): void {
   }
 }
 
-export function subscriptionTierMeetsRequired(
-  current: SubscriptionTier,
-  required: FeatureAccessTier,
-): boolean {
-  const rank: Record<SubscriptionTier, number> = { free: 0, pro: 1, premium: 2 };
-  const req: Record<FeatureAccessTier, number> = { free: 0, pro: 1, premium: 2 };
-  return rank[current] >= req[required];
+/** @deprecated Checkout success is confirmed via Billing Core + entitlements refresh. */
+export function markSubscriptionActiveAfterCheckout(_planId?: BillingPlanId): void {
+  // No-op: sessionStorage premium stub removed for CodeVertex compliance.
+}
+
+export async function fetchEntitlementsFromBillingCore(): Promise<CodeVertexEntitlement[]> {
+  const { data, error } = await supabase.functions.invoke('billing-entitlements', {
+    body: {},
+  });
+  if (error) {
+    console.warn('[billing] entitlements fetch failed', error.message);
+    return [];
+  }
+  const list = (data as { entitlements?: CodeVertexEntitlement[] } | null)?.entitlements;
+  return Array.isArray(list) ? list : [];
 }
 
 export async function getSubscriptionStatus(): Promise<SubscriptionStatusResult> {
   const dev = readDevSubscriptionTierOverride();
   if (dev) {
-    return { tier: dev };
+    const entitlements = devEntitlementsForTier(dev);
+    return { tier: dev, entitlements };
   }
-  const sessionTier = readCheckoutSessionTier();
-  if (sessionTier) {
-    return { tier: sessionTier };
-  }
-  return { tier: 'free' };
+
+  const entitlements = await fetchEntitlementsFromBillingCore();
+  const tier = inferTierFromEntitlements(entitlements);
+  return { tier, entitlements };
 }
 
 /** Reads pending premium meta if present, not expired, and clears stale payloads. */
@@ -183,32 +187,31 @@ export function readValidPendingPremiumMeta(storageKey: string): PendingPremiumA
 }
 
 /**
- * Starts checkout for premium — stub redirects back with `checkout_success=1` on the return URL.
+ * Redirect to Billing Core checkout (no Stripe SDK, no price_id in Splitly).
  */
-const CHECKOUT_PLAN_QUERY_PARAM = 'plan';
-
 export async function createCheckoutSession(options?: {
   successReturnPath?: string;
-  /** Passed through for Stripe/edge wiring; stub appends to return URL. */
   planId?: BillingPlanId;
+  featureKey?: string;
 }): Promise<CheckoutIntentResult> {
   if (typeof window === 'undefined') {
     return { ok: false, error: 'Checkout is only available in the browser' };
   }
 
-  const url = options?.successReturnPath
-    ? new URL(options.successReturnPath, window.location.origin)
-    : new URL(window.location.href);
-  url.searchParams.set(CHECKOUT_SUCCESS_QUERY_PARAM, '1');
+  const returnPath = options?.successReturnPath ?? `${window.location.pathname}${window.location.search}`;
+  const returnUrl = new URL(returnPath, window.location.origin);
+  returnUrl.searchParams.set(CHECKOUT_SUCCESS_QUERY_PARAM, '1');
   if (options?.planId) {
-    url.searchParams.set(CHECKOUT_PLAN_QUERY_PARAM, options.planId);
+    returnUrl.searchParams.set('plan', options.planId);
   }
 
-  // Stub: in production, replace with Stripe Checkout Session URL from edge function
-  return {
-    ok: true,
-    checkoutUrl: url.toString(),
-  };
+  const checkoutUrl = getBillingCheckoutUrl({
+    returnTo: returnUrl.toString(),
+    featureKey: options?.featureKey,
+    planCode: options?.planId,
+  });
+
+  return { ok: true, checkoutUrl };
 }
 
 export function isCheckoutSuccessInUrl(search: string): boolean {

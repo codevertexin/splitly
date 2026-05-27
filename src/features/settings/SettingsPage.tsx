@@ -73,7 +73,7 @@ export function SettingsPage({ session }: SettingsPageProps) {
     if (result.success) {
       setSaveMessage('ok');
     } else {
-      setSaveError(result.error ?? t('settings.saveError'));
+      setSaveError('error' in result ? result.error : t('settings.saveError'));
     }
   };
 

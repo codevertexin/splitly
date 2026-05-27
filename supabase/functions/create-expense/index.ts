@@ -1,4 +1,5 @@
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
+import { corsHeadersForRequest, preflightResponse } from "../_shared/cors.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 type SplitInput = {
@@ -21,17 +22,11 @@ type CreateExpenseBody = {
   status?: "draft" | "confirmed";
 };
 
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
-  "Access-Control-Allow-Methods": "POST, OPTIONS",
-};
-
-function jsonResponse(body: unknown, status = 200) {
+function jsonResponse(req: Request, body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
     headers: {
-      ...corsHeaders,
+      ...corsHeadersForRequest(req),
       "Content-Type": "application/json",
     },
   });
@@ -40,16 +35,16 @@ function jsonResponse(body: unknown, status = 200) {
 serve(async (req) => {
   try {
     if (req.method === "OPTIONS") {
-      return new Response("ok", { headers: corsHeaders });
+      return preflightResponse(req);
     }
 
     if (req.method !== "POST") {
-      return jsonResponse({ error: "Method not allowed" }, 405);
+      return jsonResponse(req, { error: "Method not allowed" }, 405);
     }
 
     const authHeader = req.headers.get("Authorization");
     if (!authHeader) {
-      return jsonResponse({ error: "Missing Authorization header" }, 401);
+      return jsonResponse(req, { error: "Missing Authorization header" }, 401);
     }
 
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
@@ -66,7 +61,7 @@ serve(async (req) => {
     } = await userClient.auth.getUser();
 
     if (userError || !user) {
-      return jsonResponse({ error: "Unauthorized" }, 401);
+      return jsonResponse(req, { error: "Unauthorized" }, 401);
     }
 
     const admin = createClient(supabaseUrl, serviceKey);
@@ -87,13 +82,13 @@ serve(async (req) => {
       status = "confirmed",
     } = body;
 
-    if (!group_id) return jsonResponse({ error: "Missing group_id" }, 400);
-    if (!title?.trim()) return jsonResponse({ error: "Missing title" }, 400);
-    if (!amount_cents || amount_cents <= 0) return jsonResponse({ error: "Invalid amount_cents" }, 400);
-    if (!paid_by_user_id) return jsonResponse({ error: "Missing paid_by_user_id" }, 400);
-    if (!participant_ids?.length) return jsonResponse({ error: "At least one participant is required" }, 400);
+    if (!group_id) return jsonResponse(req, { error: "Missing group_id" }, 400);
+    if (!title?.trim()) return jsonResponse(req, { error: "Missing title" }, 400);
+    if (!amount_cents || amount_cents <= 0) return jsonResponse(req, { error: "Invalid amount_cents" }, 400);
+    if (!paid_by_user_id) return jsonResponse(req, { error: "Missing paid_by_user_id" }, 400);
+    if (!participant_ids?.length) return jsonResponse(req, { error: "At least one participant is required" }, 400);
     if (status !== "draft" && status !== "confirmed") {
-      return jsonResponse({ error: "Invalid expense status" }, 400);
+      return jsonResponse(req, { error: "Invalid expense status" }, 400);
     }
 
     // validar membership do actor
@@ -106,7 +101,7 @@ serve(async (req) => {
       .maybeSingle();
 
     if (!actorMembership) {
-      return jsonResponse({ error: "You are not a member of this group" }, 403);
+      return jsonResponse(req, { error: "You are not a member of this group" }, 403);
     }
 
     // validar que payer pertence ao grupo
@@ -119,7 +114,7 @@ serve(async (req) => {
       .maybeSingle();
 
     if (!payerMembership) {
-      return jsonResponse({ error: "Payer is not a member of this group" }, 400);
+      return jsonResponse(req, { error: "Payer is not a member of this group" }, 400);
     }
 
     // validar participantes
@@ -133,7 +128,7 @@ serve(async (req) => {
     const invalidParticipant = participant_ids.find((id) => !validUserIds.has(id));
 
     if (invalidParticipant) {
-      return jsonResponse({ error: "One or more participants are not valid group members" }, 400);
+      return jsonResponse(req, { error: "One or more participants are not valid group members" }, 400);
     }
 
     if (event_id) {
@@ -143,13 +138,13 @@ serve(async (req) => {
         .eq("id", event_id)
         .maybeSingle();
       if (evErr || !evRow) {
-        return jsonResponse({ error: "Event not found", code: "EVENT_NOT_FOUND" }, 400);
+        return jsonResponse(req, { error: "Event not found", code: "EVENT_NOT_FOUND" }, 400);
       }
       if (evRow.group_id !== group_id) {
-        return jsonResponse({ error: "Event does not belong to this group", code: "EVENT_GROUP_MISMATCH" }, 400);
+        return jsonResponse(req, { error: "Event does not belong to this group", code: "EVENT_GROUP_MISMATCH" }, 400);
       }
       if (evRow.status === "closed") {
-        return jsonResponse({ error: "Cannot add expenses to a closed event", code: "EVENT_CLOSED" }, 400);
+        return jsonResponse(req, { error: "Cannot add expenses to a closed event", code: "EVENT_CLOSED" }, 400);
       }
     }
 
@@ -171,12 +166,12 @@ serve(async (req) => {
       });
     } else if (split_method === "manual") {
       if (!splits.length) {
-        return jsonResponse({ error: "Manual split requires splits[]" }, 400);
+        return jsonResponse(req, { error: "Manual split requires splits[]" }, 400);
       }
 
       const total = splits.reduce((sum, s) => sum + (s.share_cents || 0), 0);
       if (total !== amount_cents) {
-        return jsonResponse({ error: "Manual splits must sum exactly to amount_cents" }, 400);
+        return jsonResponse(req, { error: "Manual splits must sum exactly to amount_cents" }, 400);
       }
 
       splitRows = splits.map((s) => ({
@@ -186,12 +181,12 @@ serve(async (req) => {
       }));
     } else if (split_method === "percentage") {
       if (!splits.length) {
-        return jsonResponse({ error: "Percentage split requires splits[]" }, 400);
+        return jsonResponse(req, { error: "Percentage split requires splits[]" }, 400);
       }
 
       const totalPct = splits.reduce((sum, s) => sum + (s.percentage || 0), 0);
       if (Math.abs(totalPct - 100) > 0.01) {
-        return jsonResponse({ error: "Percentages must sum to 100" }, 400);
+        return jsonResponse(req, { error: "Percentages must sum to 100" }, 400);
       }
 
       let allocated = 0;
@@ -212,13 +207,13 @@ serve(async (req) => {
         };
       });
     } else {
-      return jsonResponse({ error: "Smart split not implemented yet in V1" }, 400);
+      return jsonResponse(req, { error: "Smart split not implemented yet in V1" }, 400);
     }
 
     // validar user_ids dos splits
     for (const row of splitRows) {
       if (!validUserIds.has(row.user_id)) {
-        return jsonResponse({ error: "Split contains invalid user_id" }, 400);
+        return jsonResponse(req, { error: "Split contains invalid user_id" }, 400);
       }
     }
 
@@ -240,7 +235,7 @@ serve(async (req) => {
       .single();
 
     if (expenseError || !expense) {
-      return jsonResponse(
+      return jsonResponse(req, 
         { error: "Failed to create expense", details: expenseError?.message },
         400,
       );
@@ -258,7 +253,7 @@ serve(async (req) => {
       );
 
     if (splitsError) {
-      return jsonResponse(
+      return jsonResponse(req, 
         { error: "Expense created but failed to create splits", details: splitsError.message },
         400,
       );
@@ -282,13 +277,13 @@ serve(async (req) => {
       },
     });
 
-    return jsonResponse({
+    return jsonResponse(req, {
       success: true,
       expense,
     });
   } catch (err) {
     console.error(err);
-    return jsonResponse(
+    return jsonResponse(req, 
       {
         error: "Unexpected server error",
         details: err instanceof Error ? err.message : String(err),

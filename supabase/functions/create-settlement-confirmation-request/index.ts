@@ -1,17 +1,12 @@
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
+import { corsHeadersForRequest, preflightResponse } from "../_shared/cors.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
 
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers":
-    "authorization, x-client-info, apikey, content-type",
-};
-
-function jsonResponse(body: unknown, status = 200) {
+function jsonResponse(req: Request, body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
     headers: {
-      ...corsHeaders,
+      ...corsHeadersForRequest(req),
       "Content-Type": "application/json",
     },
   });
@@ -26,17 +21,17 @@ type CreateSettlementConfirmationRequestBody = {
 
 serve(async (req) => {
   if (req.method === "OPTIONS") {
-    return new Response("ok", { headers: corsHeaders });
-  }
+      return preflightResponse(req);
+    }
 
   if (req.method !== "POST") {
-    return jsonResponse({ error: "Method not allowed" }, 405);
+    return jsonResponse(req, { error: "Method not allowed" }, 405);
   }
 
   try {
     const authHeader = req.headers.get("Authorization");
     if (!authHeader) {
-      return jsonResponse({ error: "Missing Authorization header" }, 401);
+      return jsonResponse(req, { error: "Missing Authorization header" }, 401);
     }
 
     const supabaseUrl = Deno.env.get("SUPABASE_URL");
@@ -44,7 +39,7 @@ serve(async (req) => {
     const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
 
     if (!supabaseUrl || !supabaseAnonKey || !serviceRoleKey) {
-      return jsonResponse(
+      return jsonResponse(req, 
         { error: "Server misconfiguration: missing Supabase env vars" },
         500,
       );
@@ -64,7 +59,7 @@ serve(async (req) => {
     } = await supabaseAuth.auth.getUser();
 
     if (userError || !user) {
-      return jsonResponse({ error: "Unauthorized" }, 401);
+      return jsonResponse(req, { error: "Unauthorized" }, 401);
     }
 
     const body = (await req.json()) as CreateSettlementConfirmationRequestBody;
@@ -75,22 +70,22 @@ serve(async (req) => {
     const currency = (body.currency?.trim() || "EUR").toUpperCase();
 
     if (!groupId) {
-      return jsonResponse({ error: "Missing group_id" }, 400);
+      return jsonResponse(req, { error: "Missing group_id" }, 400);
     }
 
     if (!targetUserId) {
-      return jsonResponse({ error: "Missing target_user_id" }, 400);
+      return jsonResponse(req, { error: "Missing target_user_id" }, 400);
     }
 
     if (!Number.isInteger(amountCents) || (amountCents ?? 0) <= 0) {
-      return jsonResponse(
+      return jsonResponse(req, 
         { error: "amount_cents must be a positive integer" },
         400,
       );
     }
 
     if (targetUserId === user.id) {
-      return jsonResponse(
+      return jsonResponse(req, 
         { error: "Cannot request settlement confirmation from yourself" },
         400,
       );
@@ -106,14 +101,14 @@ serve(async (req) => {
       .maybeSingle();
 
     if (groupError) {
-      return jsonResponse(
+      return jsonResponse(req, 
         { error: "Failed to validate group", details: groupError.message },
         500,
       );
     }
 
     if (!group) {
-      return jsonResponse({ error: "Group not found" }, 404);
+      return jsonResponse(req, { error: "Group not found" }, 404);
     }
 
     const { data: requesterMembership, error: requesterMembershipError } =
@@ -126,7 +121,7 @@ serve(async (req) => {
         .maybeSingle();
 
     if (requesterMembershipError) {
-      return jsonResponse(
+      return jsonResponse(req, 
         {
           error: "Failed to validate requester membership",
           details: requesterMembershipError.message,
@@ -136,7 +131,7 @@ serve(async (req) => {
     }
 
     if (!requesterMembership) {
-      return jsonResponse(
+      return jsonResponse(req, 
         { error: "You are not an active member of this group" },
         403,
       );
@@ -152,7 +147,7 @@ serve(async (req) => {
         .maybeSingle();
 
     if (targetMembershipError) {
-      return jsonResponse(
+      return jsonResponse(req, 
         {
           error: "Failed to validate target membership",
           details: targetMembershipError.message,
@@ -162,7 +157,7 @@ serve(async (req) => {
     }
 
     if (!targetMembership) {
-      return jsonResponse(
+      return jsonResponse(req, 
         { error: "Target user is not an active member of this group" },
         403,
       );
@@ -214,7 +209,7 @@ serve(async (req) => {
       .single();
 
     if (notificationError) {
-      return jsonResponse(
+      return jsonResponse(req, 
         {
           error: "Failed to create settlement confirmation notification",
           details: notificationError.message,
@@ -236,13 +231,13 @@ serve(async (req) => {
       },
     });
 
-    return jsonResponse({
+    return jsonResponse(req, {
       success: true,
       notification_id: notification.id,
     });
   } catch (error) {
     console.error("create-settlement-confirmation-request error:", error);
-    return jsonResponse(
+    return jsonResponse(req, 
       {
         error: "Unexpected server error",
         details: error instanceof Error ? error.message : String(error),

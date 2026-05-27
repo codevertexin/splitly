@@ -1,17 +1,12 @@
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
+import { corsHeadersForRequest, preflightResponse } from "../_shared/cors.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
 
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers":
-    "authorization, x-client-info, apikey, content-type",
-};
-
-function jsonResponse(body: unknown, status = 200) {
+function jsonResponse(req: Request, body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
     headers: {
-      ...corsHeaders,
+      ...corsHeadersForRequest(req),
       "Content-Type": "application/json",
     },
   });
@@ -23,17 +18,17 @@ type ConfirmSettlementRequestBody = {
 
 serve(async (req) => {
   if (req.method === "OPTIONS") {
-    return new Response("ok", { headers: corsHeaders });
-  }
+      return preflightResponse(req);
+    }
 
   if (req.method !== "POST") {
-    return jsonResponse({ error: "Method not allowed" }, 405);
+    return jsonResponse(req, { error: "Method not allowed" }, 405);
   }
 
   try {
     const authHeader = req.headers.get("Authorization");
     if (!authHeader) {
-      return jsonResponse({ error: "Missing Authorization header" }, 401);
+      return jsonResponse(req, { error: "Missing Authorization header" }, 401);
     }
 
     const supabaseUrl = Deno.env.get("SUPABASE_URL");
@@ -41,7 +36,7 @@ serve(async (req) => {
     const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
 
     if (!supabaseUrl || !supabaseAnonKey || !serviceRoleKey) {
-      return jsonResponse(
+      return jsonResponse(req, 
         { error: "Server misconfiguration: missing Supabase env vars" },
         500,
       );
@@ -61,14 +56,14 @@ serve(async (req) => {
     } = await supabaseAuth.auth.getUser();
 
     if (userError || !user) {
-      return jsonResponse({ error: "Unauthorized" }, 401);
+      return jsonResponse(req, { error: "Unauthorized" }, 401);
     }
 
     const body = (await req.json()) as ConfirmSettlementRequestBody;
     const notificationId = body.notification_id?.trim();
 
     if (!notificationId) {
-      return jsonResponse({ error: "Missing notification_id" }, 400);
+      return jsonResponse(req, { error: "Missing notification_id" }, 400);
     }
 
     const supabaseAdmin = createClient(supabaseUrl, serviceRoleKey);
@@ -81,7 +76,7 @@ serve(async (req) => {
       .maybeSingle();
 
     if (notificationError) {
-      return jsonResponse(
+      return jsonResponse(req, 
         {
           error: "Failed to load notification",
           details: notificationError.message,
@@ -91,11 +86,11 @@ serve(async (req) => {
     }
 
     if (!notification) {
-      return jsonResponse({ error: "Notification not found" }, 404);
+      return jsonResponse(req, { error: "Notification not found" }, 404);
     }
 
     if (notification.type !== "settlement_confirmation_request") {
-      return jsonResponse(
+      return jsonResponse(req, 
         { error: "Notification is not a settlement confirmation request" },
         400,
       );
@@ -105,7 +100,7 @@ serve(async (req) => {
     const status = payload.status;
 
     if (status && status !== "pending") {
-      return jsonResponse(
+      return jsonResponse(req, 
         { error: `Request already ${status}` },
         400,
       );
@@ -119,7 +114,7 @@ serve(async (req) => {
     const currency = (payload.currency as string | undefined) || "EUR";
 
     if (!requesterUserId || !groupId || !Number.isInteger(amountCents) || amountCents <= 0) {
-      return jsonResponse(
+      return jsonResponse(req, 
         { error: "Notification payload is incomplete" },
         400,
       );
@@ -156,7 +151,7 @@ serve(async (req) => {
         .eq("user_id", user.id);
 
       if (updateDupError) {
-        return jsonResponse(
+        return jsonResponse(req, 
           {
             error: "Settlement exists but failed to update notification",
             details: updateDupError.message,
@@ -165,7 +160,7 @@ serve(async (req) => {
         );
       }
 
-      return jsonResponse({
+      return jsonResponse(req, {
         success: true,
         settlement_id: existing.id,
         deduped: true,
@@ -189,7 +184,7 @@ serve(async (req) => {
       .single();
 
     if (settlementError) {
-      return jsonResponse(
+      return jsonResponse(req, 
         {
           error: "Failed to create settlement",
           details: settlementError.message,
@@ -215,7 +210,7 @@ serve(async (req) => {
       .eq("user_id", user.id);
 
     if (updateNotificationError) {
-      return jsonResponse(
+      return jsonResponse(req, 
         {
           error: "Settlement created but failed to update notification",
           details: updateNotificationError.message,
@@ -247,13 +242,13 @@ serve(async (req) => {
       },
     });
 
-    return jsonResponse({
+    return jsonResponse(req, {
       success: true,
       settlement_id: settlement.id,
     });
   } catch (error) {
     console.error("confirm-settlement-request error:", error);
-    return jsonResponse(
+    return jsonResponse(req, 
       {
         error: "Unexpected server error",
         details: error instanceof Error ? error.message : String(error),

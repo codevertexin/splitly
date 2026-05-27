@@ -10,12 +10,6 @@ export const PENDING_PREMIUM_ACTION_TTL_MS = 30 * 60 * 1000;
 export const CHECKOUT_SUCCESS_QUERY_PARAM = 'checkout_success';
 
 /**
- * sessionStorage: after a successful checkout return, `getSubscriptionStatus` treats the user as premium
- * until the tab closes (stub; replace with server-backed tier when billing API exists).
- */
-export const SESSION_CHECKOUT_PREMIUM_KEY = 'splitly_checkout_premium_v1';
-
-/**
  * sessionStorage: when the user taps “Continue” after checkout but no resume handler is mounted
  * (e.g. landed on Dashboard), the target feature key is stored so the feature screen can resume once.
  */
@@ -42,6 +36,7 @@ export const BILLING_FEATURE_REGISTRY: Record<string, BillingFeatureDefinition> 
     key: SCAN_RECEIPT_FEATURE_KEY,
     releaseStatus: 'unreleased',
     tier: 'pro',
+    entitlementKey: SCAN_RECEIPT_FEATURE_KEY,
     label: 'Scan receipt',
   },
   example_unreleased_premium: {

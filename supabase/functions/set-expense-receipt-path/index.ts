@@ -1,17 +1,12 @@
 import { serve } from 'https://deno.land/std@0.224.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { corsHeadersForRequest, preflightResponse } from '../_shared/cors.ts';
 
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-  'Access-Control-Allow-Methods': 'POST, OPTIONS',
-};
-
-function json(data: Record<string, unknown>, init: ResponseInit = {}) {
+function json(req: Request, data: Record<string, unknown>, init: ResponseInit = {}) {
   return new Response(JSON.stringify(data), {
     ...init,
     headers: {
-      ...corsHeaders,
+      ...corsHeadersForRequest(req),
       'Content-Type': 'application/json',
       ...(init.headers ?? {}),
     },
@@ -31,11 +26,11 @@ function isValidReceiptPathForExpense(
 serve(async (req) => {
   try {
     if (req.method === 'OPTIONS') {
-      return new Response('ok', { headers: corsHeaders });
+      return preflightResponse(req);
     }
 
     if (req.method !== 'POST') {
-      return json({ error: 'Method not allowed' }, { status: 405 });
+      return json(req, { error: 'Method not allowed' }, { status: 405 });
     }
 
     const supabaseUrl = Deno.env.get('SUPABASE_URL');
@@ -43,12 +38,12 @@ serve(async (req) => {
     const supabaseServiceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
 
     if (!supabaseUrl || !supabaseAnonKey || !supabaseServiceRoleKey) {
-      return json({ error: 'Missing Supabase env vars' }, { status: 500 });
+      return json(req,{ error: 'Missing Supabase env vars' }, { status: 500 });
     }
 
     const authHeader = req.headers.get('Authorization');
     if (!authHeader) {
-      return json({ error: 'Missing Authorization header' }, { status: 401 });
+      return json(req,{ error: 'Missing Authorization header' }, { status: 401 });
     }
 
     const userClient = createClient(supabaseUrl, supabaseAnonKey, {
@@ -63,7 +58,7 @@ serve(async (req) => {
     } = await userClient.auth.getUser();
 
     if (authError || !user) {
-      return json({ error: 'Unauthorized' }, { status: 401 });
+      return json(req,{ error: 'Unauthorized' }, { status: 401 });
     }
 
     const body = await req.json() as {
@@ -79,10 +74,10 @@ serve(async (req) => {
     const receiptPath = hasReceiptPath ? (body.receipt_path as string | null) : undefined;
 
     if (!expenseId) {
-      return json({ error: 'expense_id is required' }, { status: 400 });
+      return json(req,{ error: 'expense_id is required' }, { status: 400 });
     }
     if (!hasReceiptPath) {
-      return json({ error: 'receipt_path is required (use null to clear)' }, { status: 400 });
+      return json(req,{ error: 'receipt_path is required (use null to clear)' }, { status: 400 });
     }
 
     const { data: existingExpense, error: existingExpenseError } = await adminClient
@@ -92,18 +87,18 @@ serve(async (req) => {
       .maybeSingle();
 
     if (existingExpenseError) {
-      return json({ error: existingExpenseError.message }, { status: 400 });
+      return json(req,{ error: existingExpenseError.message }, { status: 400 });
     }
 
     if (!existingExpense) {
-      return json({ error: 'Expense not found' }, { status: 404 });
+      return json(req,{ error: 'Expense not found' }, { status: 404 });
     }
 
     if (
       existingExpense.created_by !== user.id &&
       existingExpense.paid_by_user_id !== user.id
     ) {
-      return json({ error: 'Forbidden' }, { status: 403 });
+      return json(req,{ error: 'Forbidden' }, { status: 403 });
     }
 
     const groupId = existingExpense.group_id as string;
@@ -117,16 +112,16 @@ serve(async (req) => {
       .maybeSingle();
 
     if (membershipError) {
-      return json({ error: membershipError.message }, { status: 400 });
+      return json(req,{ error: membershipError.message }, { status: 400 });
     }
 
     if (!membership) {
-      return json({ error: 'You are not an active member of this group' }, { status: 403 });
+      return json(req,{ error: 'You are not an active member of this group' }, { status: 403 });
     }
 
     if (receiptPath !== null && receiptPath !== '') {
       if (!isValidReceiptPathForExpense(receiptPath, groupId, expenseId)) {
-        return json({ error: 'Invalid receipt_path for this expense' }, { status: 400 });
+        return json(req,{ error: 'Invalid receipt_path for this expense' }, { status: 400 });
       }
     }
 
@@ -159,15 +154,15 @@ serve(async (req) => {
       .single();
 
     if (updateError || !updated) {
-      return json(
+      return json(req,
         { error: updateError?.message ?? 'Failed to update expense' },
         { status: 400 },
       );
     }
 
-    return json({ expense: updated });
+    return json(req,{ expense: updated });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown error';
-    return json({ error: message }, { status: 500 });
+    return json(req,{ error: message }, { status: 500 });
   }
 });

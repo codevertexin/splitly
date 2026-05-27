@@ -5,19 +5,15 @@ import { createExpenseCanonical } from '../_shared/finance/engine/createExpenseC
 import type { CreateExpenseCanonicalInput } from '../_shared/finance/types.ts';
 import { computeDebtsToPayer } from '../_shared/finance/engine/settlementAware.ts';
 
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-  'Access-Control-Allow-Methods': 'POST, OPTIONS',
-};
+import { corsHeadersForRequest, preflightResponse } from '../_shared/cors.ts';
 
 type Json = Record<string, unknown>;
 
-function json(data: Json, init: ResponseInit = {}) {
+function json(req: Request, data: Json, init: ResponseInit = {}) {
   return new Response(JSON.stringify(data), {
     ...init,
     headers: {
-      ...corsHeaders,
+      ...corsHeadersForRequest(req),
       'Content-Type': 'application/json',
       ...(init.headers ?? {}),
     },
@@ -27,11 +23,11 @@ function json(data: Json, init: ResponseInit = {}) {
 serve(async (req) => {
   try {
     if (req.method === 'OPTIONS') {
-      return new Response('ok', { headers: corsHeaders });
+      return preflightResponse(req);
     }
 
     if (req.method !== 'POST') {
-      return json({ error: 'Method not allowed' }, { status: 405 });
+      return json(req, { error: 'Method not allowed' }, { status: 405 });
     }
 
     const supabaseUrl = Deno.env.get('SUPABASE_URL');
@@ -39,12 +35,12 @@ serve(async (req) => {
     const supabaseServiceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
 
     if (!supabaseUrl || !supabaseAnonKey || !supabaseServiceRoleKey) {
-      return json({ error: 'Missing Supabase env vars' }, { status: 500 });
+      return json(req, { error: 'Missing Supabase env vars' }, { status: 500 });
     }
 
     const authHeader = req.headers.get('Authorization');
     if (!authHeader) {
-      return json({ error: 'Missing Authorization header' }, { status: 401 });
+      return json(req, { error: 'Missing Authorization header' }, { status: 401 });
     }
 
     const userClient = createClient(supabaseUrl, supabaseAnonKey, {
@@ -59,7 +55,7 @@ serve(async (req) => {
     } = await userClient.auth.getUser();
 
     if (authError || !user) {
-      return json({ error: 'Unauthorized' }, { status: 401 });
+      return json(req, { error: 'Unauthorized' }, { status: 401 });
     }
 
     const body = await req.json();
@@ -83,13 +79,13 @@ serve(async (req) => {
     const hasReceiptPath = Object.prototype.hasOwnProperty.call(body, 'receipt_path');
     const receiptPathInput = hasReceiptPath ? (body.receipt_path as string | null) : undefined;
 
-    if (!expenseId) return json({ error: 'expense_id is required' }, { status: 400 });
-    if (!title) return json({ error: 'title is required' }, { status: 400 });
+    if (!expenseId) return json(req, { error: 'expense_id is required' }, { status: 400 });
+    if (!title) return json(req, { error: 'title is required' }, { status: 400 });
     if (!Number.isInteger(amountCents) || amountCents <= 0) {
-      return json({ error: 'amount_cents must be a positive integer' }, { status: 400 });
+      return json(req, { error: 'amount_cents must be a positive integer' }, { status: 400 });
     }
     if (!Array.isArray(participantIds) || participantIds.length === 0) {
-      return json({ error: 'participant_ids are required' }, { status: 400 });
+      return json(req, { error: 'participant_ids are required' }, { status: 400 });
     }
 
     const { data: existingExpense, error: existingExpenseError } = await adminClient
@@ -101,18 +97,18 @@ serve(async (req) => {
       .maybeSingle();
 
     if (existingExpenseError) {
-      return json({ error: existingExpenseError.message }, { status: 400 });
+      return json(req, { error: existingExpenseError.message }, { status: 400 });
     }
 
     if (!existingExpense) {
-      return json({ error: 'Expense not found' }, { status: 404 });
+      return json(req, { error: 'Expense not found' }, { status: 404 });
     }
 
     if (
       existingExpense.created_by !== user.id &&
       existingExpense.paid_by_user_id !== user.id
     ) {
-      return json({ error: 'Forbidden' }, { status: 403 });
+      return json(req, { error: 'Forbidden' }, { status: 403 });
     }
 
     const groupId = existingExpense.group_id as string;
@@ -129,11 +125,11 @@ serve(async (req) => {
       .maybeSingle();
 
     if (membershipError) {
-      return json({ error: membershipError.message }, { status: 400 });
+      return json(req, { error: membershipError.message }, { status: 400 });
     }
 
     if (!membership) {
-      return json({ error: 'You are not an active member of this group' }, { status: 403 });
+      return json(req, { error: 'You are not an active member of this group' }, { status: 403 });
     }
 
     const { data: members, error: membersError } = await adminClient
@@ -143,13 +139,13 @@ serve(async (req) => {
       .eq('status', 'active');
 
     if (membersError) {
-      return json({ error: membersError.message }, { status: 400 });
+      return json(req, { error: membersError.message }, { status: 400 });
     }
 
     const activeMemberIds = new Set((members ?? []).map((m) => m.user_id));
 
     if (eventId && !activeMemberIds.has(paidByUserId)) {
-      return json({ error: 'paid_by_user_id is not an active group member' }, { status: 400 });
+      return json(req, { error: 'paid_by_user_id is not an active group member' }, { status: 400 });
     }
 
     let engineParticipantIds: string[] = participantIds;
@@ -174,14 +170,14 @@ serve(async (req) => {
         .select('user_id, share_cents, percentage')
         .eq('expense_id', expenseId);
 
-      if (snapErr) return json({ error: snapErr.message }, { status: 400 });
+      if (snapErr) return json(req, { error: snapErr.message }, { status: 400 });
       if (!snapRows?.length) {
-        return json({ error: 'Group-wide expense has no splits snapshot' }, { status: 400 });
+        return json(req, { error: 'Group-wide expense has no splits snapshot' }, { status: 400 });
       }
 
       const existingAmount = existingExpense.amount_cents as number;
       if (amountCents !== existingAmount) {
-        return json(
+        return json(req,
           {
             error:
               'Cannot change amount on a group-wide expense (no event). expense_splits snapshot is immutable.',
@@ -197,7 +193,7 @@ serve(async (req) => {
       const snapshotIdsSorted = [...new Set(dbRows.map((r) => r.user_id))].sort();
       const requestedIdsSorted = [...new Set(participantIds)].sort();
       if (snapshotIdsSorted.join('|') !== requestedIdsSorted.join('|')) {
-        return json(
+        return json(req,
           {
             error:
               'Participants for group-wide expenses must keep the same active snapshot members.',
@@ -210,7 +206,7 @@ serve(async (req) => {
 
       if (requestedSplitMethod === 'manual') {
         if (splits.length !== engineParticipantIds.length) {
-          return json(
+          return json(req,
             { error: 'manual split must include all snapshot participants for group-wide expenses' },
             { status: 400 },
           );
@@ -225,7 +221,7 @@ serve(async (req) => {
 
       if (requestedSplitMethod === 'percentage') {
         if (splits.length !== engineParticipantIds.length) {
-          return json(
+          return json(req,
             { error: 'percentage split must include all snapshot participants for group-wide expenses' },
             { status: 400 },
           );
@@ -240,7 +236,7 @@ serve(async (req) => {
     } else {
       for (const participantId of participantIds) {
         if (!activeMemberIds.has(participantId)) {
-          return json(
+          return json(req,
             { error: `participant ${participantId} is not an active group member` },
             { status: 400 },
           );
@@ -259,17 +255,17 @@ serve(async (req) => {
         .maybeSingle();
 
       if (eventError) {
-        return json({ error: eventError.message }, { status: 400 });
+        return json(req, { error: eventError.message }, { status: 400 });
       }
 
       if (!event) {
-        return json({ error: 'Event not found for this group' }, { status: 404 });
+        return json(req, { error: 'Event not found for this group' }, { status: 404 });
       }
 
       eventStatus = event.status;
 
       if (event.status === 'closed') {
-        return json({ error: 'Cannot edit expense in a closed event' }, { status: 400 });
+        return json(req, { error: 'Cannot edit expense in a closed event' }, { status: 400 });
       }
     }
 
@@ -288,7 +284,7 @@ serve(async (req) => {
       .neq('id', expenseId);
 
     if (existingExpensesError) {
-      return json({ error: existingExpensesError.message }, { status: 400 });
+      return json(req, { error: existingExpensesError.message }, { status: 400 });
     }
 
     const eligibleExpenses = (existingExpenses ?? []).filter((expense) => {
@@ -331,7 +327,7 @@ serve(async (req) => {
         const rp = receiptPathInput as string;
         const parts = rp.split('/').filter(Boolean);
         if (parts.length < 3 || parts[0] !== groupId || parts[1] !== expenseId) {
-          return json({ error: 'Invalid receipt_path for this expense' }, { status: 400 });
+          return json(req, { error: 'Invalid receipt_path for this expense' }, { status: 400 });
         }
         receiptPatch.receipt_path = rp;
         if (Object.prototype.hasOwnProperty.call(body, 'receipt_filename')) {
@@ -374,7 +370,7 @@ serve(async (req) => {
       .single();
 
     if (updateError || !updatedExpense) {
-      return json(
+      return json(req,
         { error: updateError?.message ?? 'Failed to update expense' },
         { status: 400 },
       );
@@ -386,7 +382,7 @@ serve(async (req) => {
       .eq('expense_id', expenseId);
 
     if (deleteSplitsError) {
-      return json({ error: deleteSplitsError.message }, { status: 400 });
+      return json(req, { error: deleteSplitsError.message }, { status: 400 });
     }
 
     const splitsPayload = canonical.canonicalSplits.map((split) => ({
@@ -400,10 +396,10 @@ serve(async (req) => {
       .insert(splitsPayload);
 
     if (splitsInsertError) {
-      return json({ error: splitsInsertError.message }, { status: 400 });
+      return json(req, { error: splitsInsertError.message }, { status: 400 });
     }
 
-    return json({
+    return json(req, {
       expense: updatedExpense,
       canonical_splits: canonical.canonicalSplits,
       affects_balances: canonical.affectsBalances,
@@ -413,6 +409,6 @@ serve(async (req) => {
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown error';
-    return json({ error: message }, { status: 500 });
+    return json(req, { error: message }, { status: 500 });
   }
 });

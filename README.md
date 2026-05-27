@@ -1,29 +1,33 @@
-# Playwright starter suite for Splitly V2
+# Splitly
 
-Este pacote contém uma base de testes E2E alinhada com a nova implementação:
-- grupos com primeiro ciclo
-- despesas de grupo vs despesas de evento
-- fecho de ciclo
-- histórico
-- relatórios
-- PDF
+App de divisão de despesas do ecossistema **CodeVertex** (`SPLITLY`).
 
-## Pré-requisitos
+- **Produção:** https://splitly.codevertex.cc  
+- **Auth:** https://auth.codevertex.cc  
+- **Billing / Help / Legal:** Core URLs via `VITE_*_BASE_URL` (ver `.env.example`)
 
-1. Instalar dependências
-   npm install
-2. Copiar `.env.example` para `.env`
-3. Garantir que a app está a correr em `PLAYWRIGHT_BASE_URL`
-4. Garantir que a conta de teste já existe no Supabase
+## Setup local
 
-## Executar
+1. `npm install`
+2. Copiar `.env.example` → `.env` e preencher `VITE_SUPABASE_URL` + `VITE_SUPABASE_ANON_KEY`
+3. `npm run dev` (porta 3000)
 
-- `npm run test:e2e`
-- `npm run test:e2e:headed`
-- `npm run test:e2e:ui`
+Login local apenas em desenvolvimento: `/dev-login`.
 
-## Notas importantes
+## Scripts
 
-- Os testes usam seletores acessíveis e regex multi-idioma, mas continuam a assumir a UI atual.
-- Onde a UI seja demasiado ambígua, foi usada uma abordagem conservadora. Se houver instabilidade, a recomendação é adicionar `data-testid` aos elementos críticos.
-- O fluxo de settlement depende do estado funcional no ambiente. A suite inclui esse fluxo como teste opcional/ajustável.
+| Comando | Descrição |
+|---------|-----------|
+| `npm run dev` | Servidor Vite |
+| `npm run build` | Build de produção |
+| `npm run lint` | `tsc --noEmit` |
+
+## CodeVertex
+
+Documentação de compliance: [docs/architecture/SPLITLY_CODEVERTEX_COMPLIANCE.md](docs/architecture/SPLITLY_CODEVERTEX_COMPLIANCE.md)
+
+SSO / Auth Core: [docs/sso-auth-core-phase-2a.md](docs/sso-auth-core-phase-2a.md)
+
+## E2E (Playwright)
+
+Ver ficheiros na raiz do projeto Playwright e variáveis `PLAYWRIGHT_*` em `.env.example`.

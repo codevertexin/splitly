@@ -5,6 +5,7 @@
 
 const DEFAULT_APP_CODE = 'SPLITLY';
 const DEFAULT_ECOSYSTEM_CODE = 'codevertex';
+const DEFAULT_APP_BASE_URL = 'https://splitly.codevertex.cc';
 const DEFAULT_AUTH_BASE_URL = 'https://auth.codevertex.cc';
 const DEFAULT_BILLING_BASE_URL = 'https://billing.codevertex.cc';
 const DEFAULT_HELP_BASE_URL = 'https://help.codevertex.cc';
@@ -22,6 +23,7 @@ function baseUrl(envKey: string, fallback: string): string {
 
 export const APP_CODE = readEnv('VITE_APP_CODE') ?? DEFAULT_APP_CODE;
 export const ECOSYSTEM_CODE = readEnv('VITE_ECOSYSTEM_CODE') ?? DEFAULT_ECOSYSTEM_CODE;
+export const APP_BASE_URL = baseUrl('VITE_APP_BASE_URL', DEFAULT_APP_BASE_URL);
 export const AUTH_BASE_URL = baseUrl('VITE_AUTH_BASE_URL', DEFAULT_AUTH_BASE_URL);
 export const BILLING_BASE_URL = baseUrl('VITE_BILLING_BASE_URL', DEFAULT_BILLING_BASE_URL);
 export const HELP_BASE_URL = baseUrl('VITE_HELP_BASE_URL', DEFAULT_HELP_BASE_URL);
@@ -100,19 +102,28 @@ export function mapPathnameToHelpScreen(pathname: string): HelpScreen {
   return map[segment] ?? 'dashboard';
 }
 
-export function getHelpUrl(screen: string = 'dashboard', locale: string = 'en'): string {
-  const base = stripTrailingSlash(HELP_BASE_URL);
-  const app = encodeURIComponent(APP_CODE);
-  const scr = encodeURIComponent(screen || 'dashboard');
-  const loc = encodeURIComponent(locale || 'en');
-  return `${base}/help/${APP_CODE}?app=${app}&screen=${scr}&locale=${loc}`;
-}
+export type GetLegalUrlOptions = {
+  locale?: string;
+  /** Use `embedded=1` for in-app modals / onboarding. */
+  embedded?: boolean;
+};
 
-export function getLegalUrl(page: LegalFooterPageKey): string {
+export function getLegalUrl(
+  page: LegalFooterPageKey,
+  options?: GetLegalUrlOptions,
+): string {
   const pathKey: LegalPageKey = page === 'deleteData' ? 'delete-data' : page;
   const path = LEGAL_PATH_BY_KEY[pathKey];
   const base = stripTrailingSlash(LEGAL_BASE_URL);
-  return `${base}${path}?app=${encodeURIComponent(APP_CODE)}`;
+  const url = new URL(`${base}${path}`);
+  url.searchParams.set('app', APP_CODE);
+  if (options?.locale?.trim()) {
+    url.searchParams.set('locale', options.locale.trim());
+  }
+  if (options?.embedded) {
+    url.searchParams.set('embedded', '1');
+  }
+  return url.toString();
 }
 
 export function getAuthProfileUrl(): string {
@@ -125,9 +136,15 @@ export function getAuthSecurityUrl(): string {
   return `${base}/account/security?app=${encodeURIComponent(APP_CODE)}`;
 }
 
-export function getBillingUrl(): string {
+/** @deprecated Prefer `getBillingAccountUrl` from `codevertexBilling.ts`. */
+export function getBillingUrl(returnTo?: string): string {
   const base = stripTrailingSlash(BILLING_BASE_URL);
-  return `${base}/account?app=${encodeURIComponent(APP_CODE)}`;
+  const url = new URL(`${base}/account`);
+  url.searchParams.set('app_code', APP_CODE);
+  if (returnTo) {
+    url.searchParams.set('return_to', returnTo);
+  }
+  return url.toString();
 }
 
 export type LegalFooterLink = {
@@ -150,6 +167,7 @@ const LOCAL_LEGAL_PATH: Record<LegalFooterPageKey, string> = {
   terms: '/legal/terms',
   cookies: '/legal/cookies',
   gdpr: '/legal/gdpr',
+  'delete-data': '/legal/delete-data',
   deleteData: '/legal/delete-data',
   contact: '/legal/contact',
 };
@@ -161,6 +179,6 @@ export function getLegalFooterLinks(): LegalFooterLink[] {
     if (useLocal) {
       return { id, href: LOCAL_LEGAL_PATH[id], external: false };
     }
-    return { id, href: getLegalUrl(id), external: true };
+    return { id, href: getLegalUrl(id), external: true as const };
   });
 }

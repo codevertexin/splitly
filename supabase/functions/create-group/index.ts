@@ -1,4 +1,5 @@
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
+import { corsHeadersForRequest, preflightResponse } from "../_shared/cors.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 type CreateGroupBody = {
@@ -9,17 +10,11 @@ type CreateGroupBody = {
   initial_cycle_title?: string | null;
 };
 
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
-  "Access-Control-Allow-Methods": "POST, OPTIONS",
-};
-
-function jsonResponse(body: unknown, status = 200) {
+function jsonResponse(req: Request, body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
     headers: {
-      ...corsHeaders,
+      ...corsHeadersForRequest(req),
       "Content-Type": "application/json",
     },
   });
@@ -28,16 +23,16 @@ function jsonResponse(body: unknown, status = 200) {
 serve(async (req) => {
   try {
     if (req.method === "OPTIONS") {
-      return new Response("ok", { headers: corsHeaders });
+      return preflightResponse(req);
     }
 
     if (req.method !== "POST") {
-      return jsonResponse({ error: "Method not allowed" }, 405);
+      return jsonResponse(req, { error: "Method not allowed" }, 405);
     }
 
     const authHeader = req.headers.get("Authorization");
     if (!authHeader) {
-      return jsonResponse({ error: "Missing Authorization header" }, 401);
+      return jsonResponse(req, { error: "Missing Authorization header" }, 401);
     }
 
     const supabaseUrl = Deno.env.get("SUPABASE_URL");
@@ -45,7 +40,7 @@ serve(async (req) => {
     const supabaseServiceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
 
     if (!supabaseUrl || !supabaseAnonKey || !supabaseServiceRoleKey) {
-      return jsonResponse({ error: "Missing Supabase environment variables" }, 500);
+      return jsonResponse(req, { error: "Missing Supabase environment variables" }, 500);
     }
 
     // Valida o utilizador real
@@ -63,7 +58,7 @@ serve(async (req) => {
     } = await userClient.auth.getUser();
 
     if (userError || !user) {
-      return jsonResponse({ error: "Unauthorized", details: userError?.message }, 401);
+      return jsonResponse(req, { error: "Unauthorized", details: userError?.message }, 401);
     }
 
     // Client admin para inserts controlados
@@ -77,7 +72,7 @@ serve(async (req) => {
       body.initial_cycle_title?.trim() || "Cycle 1";
 
     if (!name || name.length < 2) {
-      return jsonResponse({ error: "Group name must have at least 2 characters" }, 400);
+      return jsonResponse(req, { error: "Group name must have at least 2 characters" }, 400);
     }
 
     // 1) Criar grupo
@@ -93,7 +88,7 @@ serve(async (req) => {
       .single();
 
     if (groupError || !group) {
-      return jsonResponse(
+      return jsonResponse(req, 
         { error: "Failed to create group", details: groupError?.message },
         400,
       );
@@ -110,7 +105,7 @@ serve(async (req) => {
       });
 
     if (memberError) {
-      return jsonResponse(
+      return jsonResponse(req, 
         {
           error: "Group created but failed to create owner membership",
           details: memberError.message,
@@ -130,7 +125,7 @@ serve(async (req) => {
     });
 
     if (batchError) {
-      return jsonResponse(
+      return jsonResponse(req, 
         {
           error: "Group created but failed to create initial expense batch",
           details: batchError.message,
@@ -158,13 +153,13 @@ serve(async (req) => {
       console.warn("Audit event failed:", auditError.message);
     }
 
-    return jsonResponse({
+    return jsonResponse(req, {
       success: true,
       group,
     });
   } catch (error) {
     console.error(error);
-    return jsonResponse(
+    return jsonResponse(req, 
       {
         error: "Unexpected server error",
         details: error instanceof Error ? error.message : String(error),

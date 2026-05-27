@@ -1,4 +1,5 @@
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
+import { corsHeadersForRequest, preflightResponse } from "../_shared/cors.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 type UpdateEventBody = {
@@ -17,26 +18,20 @@ type ExistingSplit = {
   percentage: number | null;
 };
 
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
-  "Access-Control-Allow-Methods": "POST, OPTIONS",
-};
-
-function jsonResponse(body: unknown, status = 200) {
+function jsonResponse(req: Request, body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
-    headers: { ...corsHeaders, "Content-Type": "application/json" },
+    headers: { ...corsHeadersForRequest(req), "Content-Type": "application/json" },
   });
 }
 
 serve(async (req) => {
   try {
     if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
-    if (req.method !== "POST") return jsonResponse({ error: "Method not allowed" }, 405);
+    if (req.method !== "POST") return jsonResponse(req, { error: "Method not allowed" }, 405);
 
     const authHeader = req.headers.get("Authorization");
-    if (!authHeader) return jsonResponse({ error: "Missing Authorization header" }, 401);
+    if (!authHeader) return jsonResponse(req, { error: "Missing Authorization header" }, 401);
 
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
     const anonKey = Deno.env.get("SUPABASE_ANON_KEY")!;
@@ -49,25 +44,25 @@ serve(async (req) => {
       data: { user },
       error: userError,
     } = await userClient.auth.getUser();
-    if (userError || !user) return jsonResponse({ error: "Unauthorized" }, 401);
+    if (userError || !user) return jsonResponse(req, { error: "Unauthorized" }, 401);
 
     const admin = createClient(supabaseUrl, serviceKey);
     const body = (await req.json()) as UpdateEventBody;
 
     const title = body.title?.trim();
-    if (!body.event_id) return jsonResponse({ error: "Missing event_id" }, 400);
-    if (!title || title.length < 2) return jsonResponse({ error: "Invalid title" }, 400);
+    if (!body.event_id) return jsonResponse(req, { error: "Missing event_id" }, 400);
+    if (!title || title.length < 2) return jsonResponse(req, { error: "Invalid title" }, 400);
     if (!Array.isArray(body.participant_user_ids) || body.participant_user_ids.length === 0) {
-      return jsonResponse({ error: "At least one participant is required" }, 400);
+      return jsonResponse(req, { error: "At least one participant is required" }, 400);
     }
-    if (!body.starts_at) return jsonResponse({ error: "Missing starts_at" }, 400);
+    if (!body.starts_at) return jsonResponse(req, { error: "Missing starts_at" }, 400);
 
     const startsAtDate = new Date(body.starts_at);
-    if (Number.isNaN(startsAtDate.getTime())) return jsonResponse({ error: "Invalid starts_at" }, 400);
+    if (Number.isNaN(startsAtDate.getTime())) return jsonResponse(req, { error: "Invalid starts_at" }, 400);
     const endsAtDate = body.ends_at ? new Date(body.ends_at) : null;
-    if (endsAtDate && Number.isNaN(endsAtDate.getTime())) return jsonResponse({ error: "Invalid ends_at" }, 400);
+    if (endsAtDate && Number.isNaN(endsAtDate.getTime())) return jsonResponse(req, { error: "Invalid ends_at" }, 400);
     if (endsAtDate && endsAtDate.getTime() < startsAtDate.getTime()) {
-      return jsonResponse({ error: "ends_at must be greater than or equal to starts_at" }, 400);
+      return jsonResponse(req, { error: "ends_at must be greater than or equal to starts_at" }, 400);
     }
 
     const { data: event, error: eventError } = await admin
@@ -75,8 +70,8 @@ serve(async (req) => {
       .select("id, group_id, status, created_by")
       .eq("id", body.event_id)
       .maybeSingle();
-    if (eventError || !event) return jsonResponse({ error: "Event not found" }, 404);
-    if (event.status === "closed") return jsonResponse({ error: "Closed events cannot be edited" }, 400);
+    if (eventError || !event) return jsonResponse(req, { error: "Event not found" }, 404);
+    if (event.status === "closed") return jsonResponse(req, { error: "Closed events cannot be edited" }, 400);
 
     const { data: actorMembership } = await admin
       .from("group_members")
@@ -85,9 +80,9 @@ serve(async (req) => {
       .eq("user_id", user.id)
       .eq("status", "active")
       .maybeSingle();
-    if (!actorMembership) return jsonResponse({ error: "You are not an active member of this group" }, 403);
+    if (!actorMembership) return jsonResponse(req, { error: "You are not an active member of this group" }, 403);
     if (event.created_by !== user.id) {
-      return jsonResponse({ error: "Only the event creator can update this event" }, 403);
+      return jsonResponse(req, { error: "Only the event creator can update this event" }, 403);
     }
 
     const participantUserIds = Array.from(new Set([event.created_by, ...body.participant_user_ids]));
@@ -98,7 +93,7 @@ serve(async (req) => {
       .eq("status", "active");
     const activeMemberIds = new Set((activeMembers || []).map((m) => m.user_id));
     const invalidUser = participantUserIds.find((id) => !activeMemberIds.has(id));
-    if (invalidUser) return jsonResponse({ error: "All participants must be active group members" }, 400);
+    if (invalidUser) return jsonResponse(req, { error: "All participants must be active group members" }, 400);
 
     const { error: updateEventError } = await admin
       .from("events")
@@ -109,13 +104,13 @@ serve(async (req) => {
         ends_at: endsAtDate ? endsAtDate.toISOString() : null,
       })
       .eq("id", event.id);
-    if (updateEventError) return jsonResponse({ error: updateEventError.message }, 400);
+    if (updateEventError) return jsonResponse(req, { error: updateEventError.message }, 400);
 
     const { data: existingParticipants, error: existingParticipantsError } = await admin
       .from("event_participants")
       .select("id, user_id")
       .eq("event_id", event.id);
-    if (existingParticipantsError) return jsonResponse({ error: existingParticipantsError.message }, 400);
+    if (existingParticipantsError) return jsonResponse(req, { error: existingParticipantsError.message }, 400);
 
     const existingIds = new Set((existingParticipants || []).map((p) => p.user_id));
     const removedUserIds = (existingParticipants || [])
@@ -132,7 +127,7 @@ serve(async (req) => {
         .select("id, amount_cents, split_method, status")
         .eq("event_id", event.id)
         .is("deleted_at", null);
-      if (eventExpensesError) return jsonResponse({ error: eventExpensesError.message }, 400);
+      if (eventExpensesError) return jsonResponse(req, { error: eventExpensesError.message }, 400);
 
       const expenseIds = (eventExpenses || []).map((e) => e.id);
       if (expenseIds.length > 0) {
@@ -140,7 +135,7 @@ serve(async (req) => {
           .from("expense_splits")
           .select("expense_id, user_id, share_cents, percentage")
           .in("expense_id", expenseIds);
-        if (splitsError) return jsonResponse({ error: splitsError.message }, 400);
+        if (splitsError) return jsonResponse(req, { error: splitsError.message }, 400);
 
         const splitsByExpense = new Map<string, ExistingSplit[]>();
         for (const row of splitRows || []) {
@@ -204,12 +199,12 @@ serve(async (req) => {
             .from("expense_splits")
             .delete()
             .eq("expense_id", expense.id);
-          if (deleteSplitsError) return jsonResponse({ error: deleteSplitsError.message }, 400);
+          if (deleteSplitsError) return jsonResponse(req, { error: deleteSplitsError.message }, 400);
 
           const { error: insertSplitsError } = await admin
             .from("expense_splits")
             .insert(rebuilt);
-          if (insertSplitsError) return jsonResponse({ error: insertSplitsError.message }, 400);
+          if (insertSplitsError) return jsonResponse(req, { error: insertSplitsError.message }, 400);
         }
       }
     }
@@ -224,7 +219,7 @@ serve(async (req) => {
             status: userId === event.created_by ? "going" : "pending",
           })),
         );
-      if (addError) return jsonResponse({ error: addError.message }, 400);
+      if (addError) return jsonResponse(req, { error: addError.message }, 400);
     }
 
     if (removeParticipantRowIds.length > 0) {
@@ -232,7 +227,7 @@ serve(async (req) => {
         .from("event_participants")
         .delete()
         .in("id", removeParticipantRowIds);
-      if (removeError) return jsonResponse({ error: removeError.message }, 400);
+      if (removeError) return jsonResponse(req, { error: removeError.message }, 400);
     }
 
     await admin.from("audit_events").insert({
@@ -251,9 +246,9 @@ serve(async (req) => {
       },
     });
 
-    return jsonResponse({ success: true });
+    return jsonResponse(req, { success: true });
   } catch (err) {
-    return jsonResponse(
+    return jsonResponse(req, 
       { error: "Unexpected server error", details: err instanceof Error ? err.message : String(err) },
       500,
     );

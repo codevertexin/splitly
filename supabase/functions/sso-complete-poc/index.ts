@@ -1,14 +1,9 @@
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
+import { corsHeadersForRequest, preflightResponse } from "../_shared/cors.ts";
 import { createClient, type SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const APP_CODE = "SPLITLY";
 const SSO_PLACEHOLDER_EMAIL_DOMAIN = "sso.codevertex.local";
-
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
-  "Access-Control-Allow-Methods": "POST, OPTIONS",
-};
 
 type PocErrorBody = {
   ok: false;
@@ -54,19 +49,19 @@ type LocalProfileRow = {
   default_currency: string;
 };
 
-function jsonResponse(body: unknown, status = 200) {
+function jsonResponse(req: Request, body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
     headers: {
-      ...corsHeaders,
+      ...corsHeadersForRequest(req),
       "Content-Type": "application/json",
     },
   });
 }
 
-function fail(step: string, code: string, message: string, status = 400) {
+function fail(req: Request, step: string, code: string, message: string, status = 400) {
   const body: PocErrorBody = { ok: false, step, code, message };
-  return jsonResponse(body, status);
+  return jsonResponse(req, body, status);
 }
 
 function requireEnv(name: string): string | null {
@@ -309,11 +304,11 @@ async function createSessionViaMagicLink(
 
 serve(async (req) => {
   if (req.method === "OPTIONS") {
-    return new Response("ok", { headers: corsHeaders });
-  }
+      return preflightResponse(req);
+    }
 
   if (req.method !== "POST") {
-    return fail("request", "method_not_allowed", "Only POST is supported", 405);
+    return fail(req, "request", "method_not_allowed", "Only POST is supported", 405);
   }
 
   const supabaseUrl = requireEnv("SUPABASE_URL");
@@ -323,7 +318,7 @@ serve(async (req) => {
   const codevertexAnonKey = requireEnv("CODEVERTEX_SUPABASE_ANON_KEY");
 
   if (!supabaseUrl || !anonKey || !serviceKey || !codevertexUrl || !codevertexAnonKey) {
-    return fail(
+    return fail(req, 
       "env",
       "missing_secrets",
       "Missing one or more required secrets (SUPABASE_* or CODEVERTEX_*)",
@@ -335,22 +330,22 @@ serve(async (req) => {
   try {
     body = await req.json() as { ticket?: unknown };
   } catch {
-    return fail("validate_body", "invalid_json", "Request body must be JSON");
+    return fail(req, "validate_body", "invalid_json", "Request body must be JSON");
   }
 
   const ticket = body.ticket;
   if (!isNonEmptyString(ticket)) {
-    return fail("validate_body", "ticket_required", "Field ticket must be a non-empty string");
+    return fail(req, "validate_body", "ticket_required", "Field ticket must be a non-empty string");
   }
 
   const consumeResult = await consumeSsoTicket(codevertexUrl, codevertexAnonKey, ticket);
   if (consumeResult.error) {
-    return jsonResponse(consumeResult.error, 502);
+    return jsonResponse(req, consumeResult.error, 502);
   }
 
   const corePayload = consumeResult.data!;
   if (corePayload.ok !== true) {
-    return fail(
+    return fail(req, 
       "validate_core",
       "core_not_ok",
       corePayload.message ?? corePayload.error ?? "Auth Core ok !== true",
@@ -359,12 +354,12 @@ serve(async (req) => {
 
   const coreProfile = corePayload.profile;
   if (!coreProfile?.id || !isNonEmptyString(coreProfile.id)) {
-    return fail("validate_core", "missing_profile_id", "Auth Core profile.id is required");
+    return fail(req, "validate_core", "missing_profile_id", "Auth Core profile.id is required");
   }
 
   const membershipError = validateSplitlyMembership(corePayload);
   if (membershipError) {
-    return fail("validate_core", "membership_inactive", membershipError);
+    return fail(req, "validate_core", "membership_inactive", membershipError);
   }
 
   const codevertexUserId = coreProfile.id.trim();
@@ -386,7 +381,7 @@ serve(async (req) => {
     .maybeSingle();
 
   if (findError) {
-    return fail("find_profile", "db_error", findError.message, 500);
+    return fail(req, "find_profile", "db_error", findError.message, 500);
   }
 
   let localUserId: string;
@@ -405,7 +400,7 @@ serve(async (req) => {
         .eq("id", localUserId);
 
       if (syncError) {
-        return fail("sync_profile", "db_error", syncError.message, 500);
+        return fail(req, "sync_profile", "db_error", syncError.message, 500);
       }
     }
   } else {
@@ -416,7 +411,7 @@ serve(async (req) => {
     });
 
     if (createUserError || !createdUser.user) {
-      return fail(
+      return fail(req, 
         "create_auth_user",
         "create_user_failed",
         createUserError?.message ?? "auth.admin.createUser returned no user",
@@ -431,17 +426,17 @@ serve(async (req) => {
       .insert(buildProfileInsert(localUserId, codevertexUserId, coreProfile));
 
     if (insertProfileError) {
-      return fail("create_profile", "db_error", insertProfileError.message, 500);
+      return fail(req, "create_profile", "db_error", insertProfileError.message, 500);
     }
   }
 
   const sessionResult = await createSessionViaMagicLink(admin, anon, email);
   if ("error" in sessionResult) {
     const status = sessionResult.error.step === "verify_otp" ? 502 : 500;
-    return jsonResponse(sessionResult.error, status);
+    return jsonResponse(req, sessionResult.error, status);
   }
 
-  return jsonResponse({
+  return jsonResponse(req, {
     ok: true,
     local_user_id: localUserId,
     codevertex_user_id: codevertexUserId,

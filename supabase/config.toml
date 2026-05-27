@@ -517,3 +517,8 @@ enabled = true
 verify_jwt = false
 import_map = "./functions/sso-complete/deno.json"
 entrypoint = "./functions/sso-complete/index.ts"
+
+[functions.billing-entitlements]
+enabled = true
+verify_jwt = true
+entrypoint = "./functions/billing-entitlements/index.ts"

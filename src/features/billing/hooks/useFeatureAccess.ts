@@ -1,24 +1,31 @@
 import { useCallback, useEffect, useState } from 'react';
 import { BILLING_FEATURE_REGISTRY } from '../constants/billing.constants';
-import { getSubscriptionStatus, subscriptionTierMeetsRequired } from '../services/billing.service';
+import {
+  getSubscriptionStatus,
+  hasActiveEntitlement,
+} from '../services/billing.service';
 import type {
   BillingFeatureKey,
+  CodeVertexEntitlement,
   FeatureGateResolution,
   SubscriptionTier,
 } from '../types/billing.types';
 
 /**
  * Resolves subscription tier and per-feature gating (interest vs upgrade vs allowed).
+ * Released features are gated by Billing Core entitlements, not product_code.
  */
 export function useFeatureAccess() {
   const [tier, setTier] = useState<SubscriptionTier>('free');
+  const [entitlements, setEntitlements] = useState<CodeVertexEntitlement[]>([]);
   const [loading, setLoading] = useState(true);
 
   const refresh = useCallback(async () => {
     setLoading(true);
     try {
-      const { tier: next } = await getSubscriptionStatus();
-      setTier(next);
+      const status = await getSubscriptionStatus();
+      setTier(status.tier);
+      setEntitlements(status.entitlements);
     } finally {
       setLoading(false);
     }
@@ -42,13 +49,14 @@ export function useFeatureAccess() {
         return { gate: 'interest', feature: def };
       }
 
-      if (def.releaseStatus === 'released' && !subscriptionTierMeetsRequired(tier, def.tier)) {
+      const entitlementKey = def.entitlementKey ?? def.key;
+      if (!hasActiveEntitlement(entitlements, entitlementKey)) {
         return { gate: 'upgrade', feature: def };
       }
 
       return { gate: 'allowed' };
     },
-    [tier],
+    [entitlements],
   );
 
   const canUseFeature = useCallback(
@@ -58,6 +66,7 @@ export function useFeatureAccess() {
 
   return {
     tier,
+    entitlements,
     isPremium,
     isProOrHigher,
     loading,

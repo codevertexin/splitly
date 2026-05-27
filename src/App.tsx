@@ -15,8 +15,13 @@ import { SettingsPage } from './features/settings/SettingsPage';
 import { ContactsPage } from './features/contacts/ContactsPage';
 import { PeopleDetailPage } from './features/people/PeopleDetailPage';
 import { ReportsPage } from './features/reports/ReportsPage';
-import { HelpPage } from './pages/HelpPage';
+import { HelpRedirectPage } from './pages/HelpRedirectPage';
 import { LegalPage } from './pages/LegalPage';
+import {
+  LoginRedirectPage,
+  ProfileRedirectPage,
+  RegisterRedirectPage,
+} from './pages/AuthRouteRedirects';
 import { Session } from '@supabase/supabase-js';
 import { Loader2, AlertCircle, ExternalLink } from 'lucide-react';
 import { InviteEntryPage } from './features/groups/InviteEntryPage';
@@ -194,6 +199,10 @@ export default function App() {
         <Routes>
           <Route path="/callback" element={<LegacySsoCallbackRedirect />} />
           <Route path="/sso/callback" element={<SsoCallbackPage />} />
+          <Route path="/login" element={<LoginRedirectPage />} />
+          <Route path="/register" element={<RegisterRedirectPage />} />
+          <Route path="/profile" element={<ProfileRedirectPage />} />
+          <Route path="/help" element={<HelpRedirectPage />} />
           {import.meta.env.DEV && (
             <Route path="/dev-login" element={<DevLoginPage />} />
           )}
@@ -214,7 +223,7 @@ export default function App() {
               <Route path="reports" element={<ReportsPage session={session} />} />
               <Route path="events/:id" element={<EventDetailPage session={session} />} />
               <Route path="settings" element={<SettingsPage session={session} />} />
-              <Route path="help" element={<HelpPage />} />
+              <Route path="help" element={<HelpRedirectPage />} />
               <Route path="legal/:topic" element={<LegalPage />} />
               <Route path="*" element={<Navigate to="/dashboard" replace />} />
             </Route>

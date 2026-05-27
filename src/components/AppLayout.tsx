@@ -30,12 +30,8 @@ import { useNotifications } from '../hooks/useNotifications';
 import { notifyExpensesChanged } from '../lib/expenseEvents';
 import { BillingGuardProvider } from '../features/billing/BillingGuardProvider';
 import { LegalFooterLinks } from './LegalFooterLinks';
-import {
-  getHelpUrl,
-  LOCAL_HELP_PATH,
-  mapPathnameToHelpScreen,
-  shouldUseLocalHelp,
-} from '../lib/codevertexConfig';
+import { LOCAL_HELP_PATH, shouldUseLocalHelp } from '../lib/codevertexConfig';
+import { getHelpUrl, mapPathnameToHelpContext } from '../lib/codevertexHelp';
 
 interface AppLayoutProps {
   session: Session;
@@ -160,12 +156,20 @@ export function AppLayout({ session }: AppLayoutProps) {
       navigate(LOCAL_HELP_PATH);
       return;
     }
-    const screen = mapPathnameToHelpScreen(location.pathname);
     const helpLocale =
       i18n.language === 'pt-PT' || i18n.language === 'pt-BR' || i18n.language === 'es'
         ? i18n.language
         : 'en';
-    window.open(getHelpUrl(screen, helpLocale), '_blank', 'noopener,noreferrer');
+    const ctx = mapPathnameToHelpContext(location.pathname);
+    window.open(
+      getHelpUrl({
+        ...ctx,
+        locale: helpLocale,
+        returnTo: `${window.location.origin}${location.pathname}`,
+      }),
+      '_blank',
+      'noopener,noreferrer',
+    );
   };
 
   const locale = useMemo(() => {

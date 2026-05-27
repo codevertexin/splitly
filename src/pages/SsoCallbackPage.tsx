@@ -70,9 +70,9 @@ async function resolveSsoCompletePayload(
 }
 
 function logSsoCallback(resolvedReturnTo: string): void {
-  console.log('[SSO callback]', {
+  if (!import.meta.env.DEV) return;
+  console.debug('[SSO callback]', {
     pathname: window.location.pathname,
-    search: window.location.search,
     resolvedReturnTo,
   });
 }

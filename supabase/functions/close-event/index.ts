@@ -1,30 +1,25 @@
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
+import { corsHeadersForRequest, preflightResponse } from "../_shared/cors.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 type CloseEventBody = {
   event_id: string;
 };
 
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
-  "Access-Control-Allow-Methods": "POST, OPTIONS",
-};
-
-function jsonResponse(body: unknown, status = 200) {
+function jsonResponse(req: Request, body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
-    headers: { ...corsHeaders, "Content-Type": "application/json" },
+    headers: { ...corsHeadersForRequest(req), "Content-Type": "application/json" },
   });
 }
 
 serve(async (req) => {
   try {
     if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
-    if (req.method !== "POST") return jsonResponse({ error: "Method not allowed" }, 405);
+    if (req.method !== "POST") return jsonResponse(req, { error: "Method not allowed" }, 405);
 
     const authHeader = req.headers.get("Authorization");
-    if (!authHeader) return jsonResponse({ error: "Missing Authorization header" }, 401);
+    if (!authHeader) return jsonResponse(req, { error: "Missing Authorization header" }, 401);
 
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
     const anonKey = Deno.env.get("SUPABASE_ANON_KEY")!;
@@ -37,18 +32,18 @@ serve(async (req) => {
       data: { user },
       error: userError,
     } = await userClient.auth.getUser();
-    if (userError || !user) return jsonResponse({ error: "Unauthorized" }, 401);
+    if (userError || !user) return jsonResponse(req, { error: "Unauthorized" }, 401);
 
     const admin = createClient(supabaseUrl, serviceKey);
     const body = (await req.json()) as CloseEventBody;
-    if (!body.event_id) return jsonResponse({ error: "Missing event_id" }, 400);
+    if (!body.event_id) return jsonResponse(req, { error: "Missing event_id" }, 400);
 
     const { data: event, error: eventError } = await admin
       .from("events")
       .select("id, group_id, status, created_by")
       .eq("id", body.event_id)
       .maybeSingle();
-    if (eventError || !event) return jsonResponse({ error: "Event not found" }, 404);
+    if (eventError || !event) return jsonResponse(req, { error: "Event not found" }, 404);
 
     const { data: actorMembership } = await admin
       .from("group_members")
@@ -57,13 +52,13 @@ serve(async (req) => {
       .eq("user_id", user.id)
       .eq("status", "active")
       .maybeSingle();
-    if (!actorMembership) return jsonResponse({ error: "You are not an active member of this group" }, 403);
+    if (!actorMembership) return jsonResponse(req, { error: "You are not an active member of this group" }, 403);
 
     if (event.created_by !== user.id) {
-      return jsonResponse({ error: "Only the event creator can close this event" }, 403);
+      return jsonResponse(req, { error: "Only the event creator can close this event" }, 403);
     }
     if (event.status === "closed") {
-      return jsonResponse({ success: true });
+      return jsonResponse(req, { success: true });
     }
 
     const { data: draftExpenses, error: draftExpensesError } = await admin
@@ -72,9 +67,9 @@ serve(async (req) => {
       .eq("event_id", event.id)
       .eq("status", "draft")
       .is("deleted_at", null);
-    if (draftExpensesError) return jsonResponse({ error: draftExpensesError.message }, 400);
+    if (draftExpensesError) return jsonResponse(req, { error: draftExpensesError.message }, 400);
     if ((draftExpenses || []).length > 0) {
-      return jsonResponse(
+      return jsonResponse(req, 
         { error: "There are still draft expenses in this event. Confirm or remove them before closing the event." },
         400,
       );
@@ -85,7 +80,7 @@ serve(async (req) => {
       .from("events")
       .update({ status: "closed", closed_at: nowIso })
       .eq("id", event.id);
-    if (closeError) return jsonResponse({ error: closeError.message }, 400);
+    if (closeError) return jsonResponse(req, { error: closeError.message }, 400);
 
     await admin.from("audit_events").insert({
       actor_user_id: user.id,
@@ -97,9 +92,9 @@ serve(async (req) => {
       payload: { closed_at: nowIso },
     });
 
-    return jsonResponse({ success: true });
+    return jsonResponse(req, { success: true });
   } catch (err) {
-    return jsonResponse(
+    return jsonResponse(req, 
       { error: "Unexpected server error", details: err instanceof Error ? err.message : String(err) },
       500,
     );

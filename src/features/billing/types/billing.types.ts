@@ -12,12 +12,24 @@ export type FeatureAccessTier = 'free' | 'pro' | 'premium';
 
 export type BillingFeatureKey = string;
 
+/** Active entitlement from Billing Core. */
+export interface CodeVertexEntitlement {
+  entitlement_key: string;
+  active: boolean;
+  expires_at?: string | null;
+}
+
 export interface BillingFeatureDefinition {
   /** Stable id (e.g. `export_csv`). */
   key: BillingFeatureKey;
   releaseStatus: FeatureReleaseStatus;
   /** When `released`, minimum subscription tier required (`free` = no paid tier). */
   tier: FeatureAccessTier;
+  /**
+   * Billing Core entitlement key for released features.
+   * Defaults to `key` when omitted. Gating uses entitlements, not tier alone.
+   */
+  entitlementKey?: string;
   /** Short label for modals (optional; can override in UI). */
   label?: string;
 }
@@ -39,7 +51,9 @@ export type CheckoutIntentResult =
   | { ok: false; error: string };
 
 export interface SubscriptionStatusResult {
+  /** Display-only hint from entitlements; gating uses `entitlements`. */
   tier: SubscriptionTier;
+  entitlements: CodeVertexEntitlement[];
 }
 
 export interface FeatureInterestPayload {

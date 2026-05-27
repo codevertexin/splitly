@@ -1,4 +1,5 @@
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
+import { corsHeadersForRequest, preflightResponse } from "../_shared/cors.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 
@@ -12,17 +13,11 @@ type CreateEventBody = {
   ends_at?: string | null;
 };
 
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
-  "Access-Control-Allow-Methods": "POST, OPTIONS",
-};
-
-function jsonResponse(body: unknown, status = 200) {
+function jsonResponse(req: Request, body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
     headers: {
-      ...corsHeaders,
+      ...corsHeadersForRequest(req),
       "Content-Type": "application/json",
     },
   });
@@ -31,21 +26,21 @@ function jsonResponse(body: unknown, status = 200) {
 serve(async (req) => {
   try {
     if (req.method === "OPTIONS") {
-      return new Response("ok", { headers: corsHeaders });
+      return preflightResponse(req);
     }
 
     if (req.method !== "POST") {
-      return jsonResponse({ error: "Method not allowed" }, 405);
+      return jsonResponse(req, { error: "Method not allowed" }, 405);
     }
 
     const authHeader = req.headers.get("Authorization");
     if (!authHeader) {
-      return jsonResponse({ error: "Missing Authorization header" }, 401);
+      return jsonResponse(req, { error: "Missing Authorization header" }, 401);
     }
 
     const token = authHeader.replace(/^Bearer\s+/i, "").trim();
     if (!token) {
-      return jsonResponse({ error: "Missing bearer token" }, 401);
+      return jsonResponse(req, { error: "Missing bearer token" }, 401);
     }
 
     const supabaseUrl = Deno.env.get("SUPABASE_URL");
@@ -53,7 +48,7 @@ serve(async (req) => {
     const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
 
     if (!supabaseUrl || !anonKey || !serviceKey) {
-      return jsonResponse({ error: "Missing Supabase environment variables" }, 500);
+      return jsonResponse(req, { error: "Missing Supabase environment variables" }, 500);
     }
 
     // Validar user explicitamente com o token
@@ -71,7 +66,7 @@ serve(async (req) => {
     } = await userClient.auth.getUser(token);
 
     if (userError || !user) {
-      return jsonResponse(
+      return jsonResponse(req, 
         {
           error: "Unauthorized",
           details: userError?.message ?? "Could not resolve authenticated user",
@@ -94,30 +89,30 @@ serve(async (req) => {
     const endsAt = body.ends_at ?? null;
 
     if (!groupId) {
-      return jsonResponse({ error: "Missing group_id" }, 400);
+      return jsonResponse(req, { error: "Missing group_id" }, 400);
     }
 
     if (!title || title.length < 2) {
-      return jsonResponse({ error: "Invalid title" }, 400);
+      return jsonResponse(req, { error: "Invalid title" }, 400);
     }
 
     if (!startsAt) {
-      return jsonResponse({ error: "Missing starts_at" }, 400);
+      return jsonResponse(req, { error: "Missing starts_at" }, 400);
     }
 
     const startsAtDate = new Date(startsAt);
     if (Number.isNaN(startsAtDate.getTime())) {
-      return jsonResponse({ error: "Invalid starts_at" }, 400);
+      return jsonResponse(req, { error: "Invalid starts_at" }, 400);
     }
 
     let endsAtDate: Date | null = null;
     if (endsAt) {
       endsAtDate = new Date(endsAt);
       if (Number.isNaN(endsAtDate.getTime())) {
-        return jsonResponse({ error: "Invalid ends_at" }, 400);
+        return jsonResponse(req, { error: "Invalid ends_at" }, 400);
       }
       if (endsAtDate.getTime() < startsAtDate.getTime()) {
-        return jsonResponse({ error: "ends_at must be greater than or equal to starts_at" }, 400);
+        return jsonResponse(req, { error: "ends_at must be greater than or equal to starts_at" }, 400);
       }
     }
 
@@ -131,7 +126,7 @@ serve(async (req) => {
       .maybeSingle();
 
     if (actorMembershipError) {
-      return jsonResponse(
+      return jsonResponse(req, 
         {
           error: "Failed to validate actor membership",
           details: actorMembershipError.message,
@@ -141,13 +136,13 @@ serve(async (req) => {
     }
 
     if (!actorMembership) {
-      return jsonResponse({ error: "You are not an active member of this group" }, 403);
+      return jsonResponse(req, { error: "You are not an active member of this group" }, 403);
     }
 
     // Garantir que o criador entra sempre como participante
     const participantIds = Array.from(new Set([user.id, ...requestedParticipants]));
     if (participantIds.length === 0) {
-      return jsonResponse({ error: "At least one participant is required" }, 400);
+      return jsonResponse(req, { error: "At least one participant is required" }, 400);
     }
 
     // Validar que todos os participantes são membros ativos do grupo
@@ -158,7 +153,7 @@ serve(async (req) => {
       .eq("status", "active");
 
     if (activeMembersError) {
-      return jsonResponse(
+      return jsonResponse(req, 
         {
           error: "Failed to validate participants",
           details: activeMembersError.message,
@@ -170,7 +165,7 @@ serve(async (req) => {
     const validMemberIds = new Set((activeMembers || []).map((m) => m.user_id));
     const invalidParticipant = participantIds.find((id) => !validMemberIds.has(id));
     if (invalidParticipant) {
-      return jsonResponse({ error: "One or more participants are not active group members" }, 400);
+      return jsonResponse(req, { error: "One or more participants are not active group members" }, 400);
     }
 
     // Criar evento
@@ -189,7 +184,7 @@ serve(async (req) => {
       .single();
 
     if (eventError || !event) {
-      return jsonResponse(
+      return jsonResponse(req, 
         {
           error: "Failed to create event",
           details: eventError?.message,
@@ -210,7 +205,7 @@ serve(async (req) => {
       .insert(participantsRows);
 
     if (participantsError) {
-      return jsonResponse(
+      return jsonResponse(req, 
         {
           error: "Failed to insert participants",
           details: participantsError.message,
@@ -240,13 +235,13 @@ serve(async (req) => {
       console.warn("Audit event failed:", auditError.message);
     }
 
-    return jsonResponse({
+    return jsonResponse(req, {
       success: true,
       event,
     });
   } catch (err) {
     console.error(err);
-    return jsonResponse(
+    return jsonResponse(req, 
       {
         error: "Unexpected error",
         details: err instanceof Error ? err.message : String(err),
