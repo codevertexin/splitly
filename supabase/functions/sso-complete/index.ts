@@ -16,6 +16,7 @@ type CoreProfile = {
   id?: string;
   email?: string | null;
   full_name?: string | null;
+  display_name?: string | null;
   username?: string | null;
   preferred_language?: string | null;
   avatar_url?: string | null;
@@ -86,6 +87,46 @@ function resolveEmail(profile: CoreProfile, codevertexUserId: string): string {
   return `${codevertexUserId}@${SSO_PLACEHOLDER_EMAIL_DOMAIN}`;
 }
 
+const USERNAME_MIN = 3;
+const USERNAME_MAX = 30;
+const USERNAME_ALLOWED_RE = /[^a-z0-9._-]+/g;
+
+function normalizeUsernameCandidate(raw: string | null | undefined): string | null {
+  if (!raw) return null;
+  const normalized = raw
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, "_")
+    .replace(USERNAME_ALLOWED_RE, "")
+    .replace(/^[._-]+/, "")
+    .replace(/[._-]+$/, "");
+  if (normalized.length < USERNAME_MIN) return null;
+  return normalized.slice(0, USERNAME_MAX);
+}
+
+function usernameFromEmail(email: string): string | null {
+  const localPart = email.split("@")[0] ?? "";
+  return normalizeUsernameCandidate(localPart);
+}
+
+function deriveSafeUsername(
+  profile: CoreProfile,
+  codevertexUserId: string,
+  email: string,
+): string {
+  const fromPayload = normalizeUsernameCandidate(profile.username);
+  if (fromPayload) return fromPayload;
+
+  const fromDisplay = normalizeUsernameCandidate(profile.display_name);
+  if (fromDisplay) return fromDisplay;
+
+  const fromEmail = usernameFromEmail(email);
+  if (fromEmail) return fromEmail;
+
+  const shortId = codevertexUserId.replace(/[^a-zA-Z0-9]/g, "").toLowerCase().slice(0, 8) || "unknown";
+  return `user_${shortId}`;
+}
+
 /** Exact identity for Auth Core vs local auth email (trim + lowercase). */
 function emailsMatchForLinking(coreEmail: string, localEmail: string | undefined): boolean {
   if (!localEmail) return false;
@@ -148,11 +189,13 @@ function buildProfileInsert(
   authUserId: string,
   codevertexUserId: string,
   profile: CoreProfile,
+  email: string,
 ) {
+  const safeUsername = deriveSafeUsername(profile, codevertexUserId, email);
   return {
     id: authUserId,
     codevertex_user_id: codevertexUserId,
-    username: profile.username ?? null,
+    username: safeUsername,
     full_name: profile.full_name ?? null,
     avatar_url: profile.avatar_url ?? null,
     preferred_language: profile.preferred_language ?? "en",
@@ -165,14 +208,19 @@ function buildProfileInsert(
 function buildNonDestructiveProfilePatch(
   local: LocalProfileRow,
   profile: CoreProfile,
+  codevertexUserId: string,
+  email: string,
 ): Record<string, string> {
   const patch: Record<string, string> = {};
 
   if (profile.full_name != null && profile.full_name !== local.full_name) {
     patch.full_name = profile.full_name;
   }
-  if (profile.username != null && profile.username !== local.username) {
-    patch.username = profile.username;
+  const normalizedPayloadUsername = normalizeUsernameCandidate(profile.username);
+  if (normalizedPayloadUsername && normalizedPayloadUsername !== local.username) {
+    patch.username = normalizedPayloadUsername;
+  } else if (!local.username) {
+    patch.username = deriveSafeUsername(profile, codevertexUserId, email);
   }
   if (profile.avatar_url != null && profile.avatar_url !== local.avatar_url) {
     patch.avatar_url = profile.avatar_url;
@@ -489,7 +537,12 @@ async function linkExistingLocalUser(
   }
 
   if (existingCv === codevertexUserId) {
-    const patch = buildNonDestructiveProfilePatch(row, coreProfile);
+    const patch = buildNonDestructiveProfilePatch(
+      row,
+      coreProfile,
+      codevertexUserId,
+      resolveEmail(coreProfile, codevertexUserId),
+    );
     if (Object.keys(patch).length > 0) {
       const { error: syncErr } = await admin.from("profiles").update(patch).eq("id", localUserId);
       if (syncErr) {
@@ -514,7 +567,12 @@ async function linkExistingLocalUser(
     return { localUserId };
   }
 
-  const patch = buildNonDestructiveProfilePatch(row, coreProfile);
+  const patch = buildNonDestructiveProfilePatch(
+    row,
+    coreProfile,
+    codevertexUserId,
+    resolveEmail(coreProfile, codevertexUserId),
+  );
   patch.codevertex_user_id = codevertexUserId;
 
   const { error: updateErr } = await admin.from("profiles").update(patch).eq("id", localUserId);
@@ -631,6 +689,8 @@ serve(async (req) => {
     const patch = buildNonDestructiveProfilePatch(
       existingProfile as LocalProfileRow,
       coreProfile,
+      codevertexUserId,
+      email,
     );
     if (Object.keys(patch).length > 0) {
       const { error: syncError } = await admin
@@ -677,7 +737,7 @@ serve(async (req) => {
 
       const { error: insertProfileError } = await admin
         .from("profiles")
-        .insert(buildProfileInsert(localUserId, codevertexUserId, coreProfile));
+        .insert(buildProfileInsert(localUserId, codevertexUserId, coreProfile, email));
 
       if (insertProfileError) {
         return fail(req, "create_profile", "db_error", insertProfileError.message, 500);

@@ -108,6 +108,7 @@ export function getAuthProfileManageUrl(returnTo?: string): string {
   const url = new URL(`${base}/account/profile`);
   url.searchParams.set('app', APP_CODE);
   url.searchParams.set('return_to', absoluteReturnTo);
+  url.searchParams.set('layout', 'standalone');
   return url.toString();
 }
 

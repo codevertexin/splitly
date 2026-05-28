@@ -114,10 +114,10 @@ export function SettingsPage({ session }: SettingsPageProps) {
 
             <div className="space-y-3 text-center sm:text-left">
               <h5 className="text-base font-semibold text-slate-900">
-                {t('settings.codevertexProfileTitle')}
+                {t('settings.personalDetailsTitle')}
               </h5>
               <p className="text-sm text-slate-600 leading-relaxed">
-                {t('settings.codevertexProfileDescription')}
+                {t('settings.personalDetailsDescription')}
               </p>
             </div>
 
@@ -126,15 +126,20 @@ export function SettingsPage({ session }: SettingsPageProps) {
               className="w-full"
               onClick={handleManageProfile}
             >
-              {t('settings.manageProfile')}
+              {t('settings.managePersonalDetails')}
               <ExternalLink className="ml-2 h-4 w-4 shrink-0" aria-hidden />
             </Button>
           </Card>
 
           <Card className="p-6 space-y-6">
-            <h4 className="text-sm font-bold text-slate-400 uppercase tracking-wider">
-              {t('settings.appSection')}
-            </h4>
+            <div className="space-y-1 text-center sm:text-left">
+              <h4 className="text-sm font-bold text-slate-400 uppercase tracking-wider">
+                {t('settings.appSection')}
+              </h4>
+              <p className="text-sm text-slate-600 leading-relaxed pt-1">
+                {t('settings.financialSettingsDescription')}
+              </p>
+            </div>
 
             <label className="flex flex-col gap-1.5">
               <span className="text-sm font-medium text-slate-700">{t('settings.currency')}</span>
