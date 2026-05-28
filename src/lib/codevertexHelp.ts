@@ -21,6 +21,26 @@ function stripTrailingSlash(url: string): string {
   return url.replace(/\/+$/, '');
 }
 
+/** Splitly URL to return to after Help Core (referrer or dashboard). */
+export function resolveHelpReturnTo(): string {
+  if (typeof window === 'undefined') return '';
+  try {
+    const ref = document.referrer;
+    if (ref) {
+      const u = new URL(ref);
+      if (
+        u.origin === window.location.origin &&
+        u.pathname.replace(/\/+$/, '') !== '/help'
+      ) {
+        return ref;
+      }
+    }
+  } catch {
+    // ignore
+  }
+  return `${stripTrailingSlash(window.location.origin)}/dashboard`;
+}
+
 function resolveAbsoluteReturnTo(returnTo?: string): string {
   const raw = (returnTo ?? '/').trim() || '/';
   if (/^https?:\/\//i.test(raw)) return raw;

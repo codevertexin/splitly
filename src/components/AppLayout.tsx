@@ -30,7 +30,7 @@ import { useNotifications } from '../hooks/useNotifications';
 import { notifyExpensesChanged } from '../lib/expenseEvents';
 import { BillingGuardProvider } from '../features/billing/BillingGuardProvider';
 import { LegalFooterLinks } from './LegalFooterLinks';
-import { LOCAL_HELP_PATH, shouldUseLocalHelp } from '../lib/codevertexConfig';
+import { LOCAL_HELP_PATH } from '../lib/codevertexConfig';
 import { getHelpUrl, mapPathnameToHelpContext } from '../lib/codevertexHelp';
 
 interface AppLayoutProps {
@@ -152,7 +152,7 @@ export function AppLayout({ session }: AppLayoutProps) {
   const openSupportAndHelp = () => {
     setUserMenuOpen(false);
     setNotificationsOpen(false);
-    if (shouldUseLocalHelp()) {
+    if (import.meta.env.DEV) {
       navigate(LOCAL_HELP_PATH);
       return;
     }

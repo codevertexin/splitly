@@ -35,7 +35,7 @@ export function RegisterRedirectPage() {
 
 export function ProfileRedirectPage() {
   useEffect(() => {
-    window.location.replace(getAuthProfileManageUrl('/settings'));
+    window.location.replace(getAuthProfileManageUrl());
   }, []);
   return <Redirecting messageKey="auth.redirectingToSecureLogin" />;
 }

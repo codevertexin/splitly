@@ -51,7 +51,7 @@ export function SettingsPage({ session }: SettingsPageProps) {
   }, []);
 
   const handleManageProfile = () => {
-    window.location.assign(getAuthProfileManageUrl('/settings'));
+    window.location.assign(getAuthProfileManageUrl());
   };
 
   const handleSave = async () => {

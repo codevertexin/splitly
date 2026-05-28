@@ -172,10 +172,20 @@ const LOCAL_LEGAL_PATH: Record<LegalFooterPageKey, string> = {
   contact: '/legal/contact',
 };
 
-/** Footer legal links — Core in production; local paths only in dev without VITE_LEGAL_BASE_URL. */
+/** Always open Legal Core in a new tab (never in-app). */
+const LEGAL_CORE_NEW_TAB: ReadonlySet<LegalFooterPageKey> = new Set([
+  'privacy',
+  'terms',
+  'cookies',
+]);
+
+/** Footer legal links — privacy/terms/cookies always Legal Core; others local only in dev. */
 export function getLegalFooterLinks(): LegalFooterLink[] {
   const useLocal = shouldUseLocalLegal();
   return FOOTER_LEGAL_ORDER.map((id) => {
+    if (LEGAL_CORE_NEW_TAB.has(id)) {
+      return { id, href: getLegalUrl(id), external: true as const };
+    }
     if (useLocal) {
       return { id, href: LOCAL_LEGAL_PATH[id], external: false };
     }

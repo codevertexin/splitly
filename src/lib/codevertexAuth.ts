@@ -83,9 +83,17 @@ export function getAuthForgotPasswordUrl(): string {
  * Example:
  * `https://auth.codevertex.cc/account/profile?app=SPLITLY&return_to=https%3A%2F%2Fsplitly.codevertex.cc%2Fsettings`
  */
+/** Current page URL for Auth/Help/Legal `return_to` (browser only). */
+export function getCurrentAppUrl(): string {
+  if (typeof window !== 'undefined' && window.location?.href) {
+    return window.location.href;
+  }
+  return '';
+}
+
 export function getAuthProfileManageUrl(returnTo?: string): string {
   const base = stripTrailingSlash(AUTH_BASE_URL);
-  const raw = (returnTo ?? '/settings').trim() || '/settings';
+  const raw = (returnTo ?? (getCurrentAppUrl() || '/settings')).trim() || '/settings';
 
   let absoluteReturnTo: string;
   if (/^https?:\/\//i.test(raw)) {
